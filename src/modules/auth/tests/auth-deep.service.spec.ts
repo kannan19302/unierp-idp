@@ -1,28 +1,37 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AuthDeepService } from "../auth-deep.service";
+import { idpPrisma, prisma } from "@unerp/database";
 
-vi.mock("@unerp/database", () => ({
-  prisma: {
-    authApiToken: {
-      findMany: vi.fn(),
-      create: vi.fn(),
-      findFirst: vi.fn(),
-      delete: vi.fn(),
+vi.mock("@unerp/database", () => {
+  // Identity models (user, role, userSession, ...) are read through
+  // `idpPrisma`, not `prisma` Ã¢â‚¬â€ this spec predates that split and stubs
+  // them under `prisma`. Exporting the same stub object under both names
+  // keeps every `vi.mocked(prisma.user.*)` setup pointing at exactly the
+  // function the service calls.
+  const mocked = {
+    prisma: {
+      authApiToken: {
+        findMany: vi.fn(),
+        create: vi.fn(),
+        findFirst: vi.fn(),
+        delete: vi.fn(),
+      },
+      loginHistory: { findMany: vi.fn(), count: vi.fn() },
+      userSession: { findMany: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+      setting: { findUnique: vi.fn(), upsert: vi.fn() },
+      ipRestriction: {
+        findMany: vi.fn(),
+        findUnique: vi.fn(),
+        create: vi.fn(),
+        findFirst: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+      },
     },
-    loginHistory: { findMany: vi.fn(), count: vi.fn() },
-    userSession: { findMany: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
-    setting: { findUnique: vi.fn(), upsert: vi.fn() },
-    ipRestriction: {
-      findMany: vi.fn(),
-      findUnique: vi.fn(),
-      create: vi.fn(),
-      findFirst: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-    },
-  },
-  runWithTenantSession: vi.fn((_ctx, cb) => cb()),
-}));
+    runWithTenantSession: vi.fn((_ctx, cb) => cb()),
+  };
+  return { ...mocked, idpPrisma: mocked.prisma };
+});
 
 const mockDate = new Date("2026-07-27");
 vi.setSystemTime(mockDate);
@@ -47,7 +56,6 @@ describe("AuthDeepService", () => {
           createdAt: mockDate,
         },
       ];
-      const { prisma } = require("@unerp/database");
       idpPrisma.authApiToken.findMany.mockResolvedValue(mockTokens);
       const result = await service.listApiTokens("tenant-1", "user-1");
       expect(result).toEqual(mockTokens);
@@ -59,7 +67,6 @@ describe("AuthDeepService", () => {
     });
 
     it("should create an api token", async () => {
-      const { prisma } = require("@unerp/database");
       idpPrisma.authApiToken.create.mockResolvedValue({
         id: "1",
         name: "My Token",
@@ -77,7 +84,6 @@ describe("AuthDeepService", () => {
     });
 
     it("should delete an api token", async () => {
-      const { prisma } = require("@unerp/database");
       idpPrisma.authApiToken.findFirst.mockResolvedValue({
         id: "1",
         tenantId: "tenant-1",
@@ -90,7 +96,6 @@ describe("AuthDeepService", () => {
 
   describe("login history", () => {
     it("should list login history with pagination", async () => {
-      const { prisma } = require("@unerp/database");
       prisma.loginHistory.findMany.mockResolvedValue([]);
       prisma.loginHistory.count.mockResolvedValue(0);
       const result = await service.listLoginHistory("t-1", "u-1", {
@@ -104,7 +109,6 @@ describe("AuthDeepService", () => {
 
   describe("sessions", () => {
     it("should list sessions", async () => {
-      const { prisma } = require("@unerp/database");
       idpPrisma.userSession.findMany.mockResolvedValue([]);
       const result = await service.listSessions("t-1", "u-1");
       expect(result).toEqual([]);
@@ -113,7 +117,6 @@ describe("AuthDeepService", () => {
 
   describe("password policy", () => {
     it("should return defaults when no policy set", async () => {
-      const { prisma } = require("@unerp/database");
       prisma.setting.findUnique.mockResolvedValue(null);
       const result = await service.getPasswordPolicy("t-1");
       expect(result.minLength).toBe(8);
@@ -123,7 +126,6 @@ describe("AuthDeepService", () => {
 
   describe("ip allowlist", () => {
     it("should list entries", async () => {
-      const { prisma } = require("@unerp/database");
       prisma.ipRestriction.findMany.mockResolvedValue([]);
       const result = await service.listIpAllowlist("t-1");
       expect(result).toEqual([]);

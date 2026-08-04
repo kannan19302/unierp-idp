@@ -6,14 +6,22 @@ import { RbacGuard } from "../rbac.guard";
 // Mock database package — proves RbacGuard's *actual* enforcement logic,
 // not just decorator presence (the exact gap the enterprise hardening plan
 // flagged: "RBAC that is actually enforced, not decorator-presence").
-vi.mock("@unerp/database", () => ({
-  prisma: {
-    userRole: {
-      findMany: vi.fn(),
+vi.mock("@unerp/database", () => {
+  // Identity models (user, role, userSession, ...) are read through
+  // `idpPrisma`, not `prisma` — this spec predates that split and stubs
+  // them under `prisma`. Exporting the same stub object under both names
+  // keeps every `vi.mocked(prisma.user.*)` setup pointing at exactly the
+  // function the service calls.
+  const mocked = {
+    prisma: {
+      userRole: {
+        findMany: vi.fn(),
+      },
     },
-  },
-  runWithTenantSession: vi.fn((_session: unknown, fn: () => unknown) => fn()),
-}));
+    runWithTenantSession: vi.fn((_session: unknown, fn: () => unknown) => fn()),
+  };
+  return { ...mocked, idpPrisma: mocked.prisma };
+});
 
 import { idpPrisma, prisma } from "@unerp/database";
 

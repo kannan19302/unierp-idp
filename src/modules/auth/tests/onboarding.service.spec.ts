@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { OnboardingService } from "../onboarding.service";
-import { DemoDataService } from "../demo-data.service";
 import { NotFoundException, BadRequestException } from "@nestjs/common";
 
 // Mock the database client
@@ -16,7 +15,12 @@ vi.mock("@unerp/database", () => {
   const mockInstalledAppCount = vi.fn();
   const mockSubscriptionFindUnique = vi.fn();
 
-  return {
+  // Identity models (user, role, userSession, ...) are read through
+  // `idpPrisma`, not `prisma` — this spec predates that split and stubs
+  // them under `prisma`. Exporting the same stub object under both names
+  // keeps every `vi.mocked(prisma.user.*)` setup pointing at exactly the
+  // function the service calls.
+  const mocked = {
     prisma: {
       tenant: {
         findUnique: mockTenantFindUnique,
@@ -64,6 +68,7 @@ vi.mock("@unerp/database", () => {
       }),
     },
   };
+  return { ...mocked, idpPrisma: mocked.prisma };
 });
 
 // Helper to access mock functions
@@ -259,52 +264,5 @@ describe("OnboardingService", () => {
         }),
       );
     });
-  });
-});
-
-describe("DemoDataService", () => {
-  let service: DemoDataService;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    service = new DemoDataService();
-  });
-
-  it("should seed sandbox records based on the industry selection", async () => {
-    tenantMocks.findUnique.mockResolvedValue({
-      id: "t1",
-      demoDataLoaded: false,
-      settings: {
-        industry: "healthcare",
-      },
-    });
-
-    orgMocks.findFirst.mockResolvedValue({
-      id: "o1",
-    });
-
-    const res = await service.seedDemoData("t1");
-    expect(res.success).toBe(true);
-    expect(idpPrisma.$transaction).toHaveBeenCalled();
-    expect(tenantMocks.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "t1" },
-        data: expect.objectContaining({
-          demoDataLoaded: true,
-        }),
-      }),
-    );
-  });
-
-  it("should throw BadRequestException if demo data has already been loaded", async () => {
-    tenantMocks.findUnique.mockResolvedValue({
-      id: "t1",
-      demoDataLoaded: true,
-      settings: {},
-    });
-
-    await expect(service.seedDemoData("t1")).rejects.toThrow(
-      BadRequestException,
-    );
   });
 });

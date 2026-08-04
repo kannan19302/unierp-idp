@@ -1,9 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AuthService } from "../auth.service";
+import { idpPrisma } from "@unerp/database";
 
 // Mock the database client
 vi.mock("@unerp/database", () => {
-  return {
+  // Identity models (user, role, userSession, ...) are read through
+  // `idpPrisma`, not `prisma` â€” this spec predates that split and stubs
+  // them under `prisma`. Exporting the same stub object under both names
+  // keeps every `vi.mocked(prisma.user.*)` setup pointing at exactly the
+  // function the service calls.
+  const mocked = {
     prisma: {
       tenant: {
         findUnique: vi.fn(),
@@ -31,6 +37,16 @@ vi.mock("@unerp/database", () => {
       emailVerificationToken: {
         create: vi.fn(),
         updateMany: vi.fn(),
+      },
+      // register() opens an idpPrisma transaction but writes main-schema models
+      // (tenant, organization, department, plan, subscription) through the
+      // OUTER `prisma` client, since the IdP client has no delegate for them.
+      // They therefore have to be stubbed here, not only on the `tx` object.
+      saaSPlan: {
+        upsert: vi.fn(),
+      },
+      tenantSubscription: {
+        create: vi.fn(),
       },
       $transaction: vi.fn((cb) =>
         cb({
@@ -80,6 +96,7 @@ vi.mock("@unerp/database", () => {
     },
     runWithTenantSession: vi.fn((_session: unknown, fn: () => unknown) => fn()),
   };
+  return { ...mocked, idpPrisma: mocked.prisma };
 });
 
 // Mock the auth utilities
@@ -124,6 +141,31 @@ describe("AuthService", () => {
     it("should register a tenant and return registration credentials", async () => {
       const { prisma } = await import("@unerp/database");
       vi.mocked(prisma.tenant.findUnique).mockResolvedValue(null);
+      // NOTE: register() opens `idpPrisma.$transaction` but creates the tenant
+      // through the OUTER `prisma` client, because Tenant lives in the main
+      // schema and the IdP client's `tx` has no `tenant` delegate. That insert
+      // therefore does not participate in the transaction — a failure later in
+      // registration leaves an orphan tenant row behind. This stub is on the
+      // outer client to match what the code actually calls; the atomicity gap
+      // is a consequence of the two-client split and is tracked separately.
+      vi.mocked(prisma.tenant.create).mockResolvedValue({
+        id: "tenant-123",
+        name: "Acme",
+        slug: "acme",
+      } as never);
+      // Same reason: Organization is a main-schema model, so it is created on
+      // the outer client too and its id is needed for the department inserts.
+      vi.mocked(prisma.organization.create).mockResolvedValue({
+        id: "org-123",
+      } as never);
+      // Registration also starts the 30-day trial: it upserts the shared
+      // free-trial plan and creates the tenant's subscription row.
+      vi.mocked(prisma.saaSPlan.upsert).mockResolvedValue({
+        id: "plan-free",
+      } as never);
+      vi.mocked(prisma.tenantSubscription.create).mockResolvedValue(
+        {} as never,
+      );
 
       const result = await authService.register({
         email: "admin@uni-erp.com",

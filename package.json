@@ -5,7 +5,7 @@
   "description": "UniERP Backend API — NestJS",
   "scripts": {
     "dev": "pnpm exec nest start --watch",
-    "build": "NODE_OPTIONS=--max-old-space-size=8192 pnpm exec nest build",
+    "build": "node --max-old-space-size=8192 ../../node_modules/@nestjs/cli/bin/nest.js build",
     "start": "node dist/main",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,test}/**/*.ts\"",
