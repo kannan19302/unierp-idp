@@ -40,7 +40,7 @@
     "@unerp/blockchain": "^1.0.2",
     "@unerp/database": "^1.0.4",
     "@unerp/service-kit": "^0.2.2",
-    "@unerp/shared": "^1.0.2",
+    "@unerp/shared": "^1.0.3",
     "bullmq": "^5.79.1",
     "cookie-parser": "^1.4.7",
     "exceljs": "^4.4.0",
