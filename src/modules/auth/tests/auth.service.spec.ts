@@ -255,6 +255,10 @@ describe("AuthService", () => {
           remember_me: false,
         },
       ] as never);
+      // No `tenant` property: the IdP schema's User has no tenant relation, it
+      // carries a bare tenantId. The old fixture asserted a relation that does
+      // not exist, which is why the service could read `user.tenant.id` in
+      // production and throw while this test passed.
       vi.mocked(idpPrisma.user.findFirst).mockResolvedValue({
         id: "user-123",
         tenantId: "tenant-123",
@@ -262,7 +266,13 @@ describe("AuthService", () => {
         firstName: "Super",
         lastName: "Admin",
         avatar: null,
-        tenant: { id: "tenant-123", name: "Acme", slug: "acme" },
+      } as never);
+      // The tenant comes from the main database — § 5.2 keeps identity and
+      // business data apart.
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+        id: "tenant-123",
+        name: "Acme",
+        slug: "acme",
       } as never);
       vi.mocked(idpPrisma.userRole.findMany).mockResolvedValue([] as never);
       const sessionUpdate = vi.fn().mockResolvedValue({});

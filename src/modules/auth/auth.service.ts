@@ -223,20 +223,31 @@ export class AuthService {
    * Registers a new tenant along with its organization, default roles, and super admin user.
    */
   async register(dto: RegisterInput) {
-    const slug = dto.organizationName
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
+    const baseSlug =
+      dto.organizationName
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "workspace";
 
-    // Check if slug already exists
-    const existingTenant = await prisma.tenant.findUnique({
-      where: { slug },
-    });
-    if (existingTenant) {
-      throw new BadRequestException(
-        "An organization with a similar name already exists. Choose a different name.",
-      );
+    // A taken slug gets a suffix; it does not reject the signup.
+    //
+    // Registration used to fail with "An organization with a similar name
+    // already exists" whenever the derived slug was taken. Two problems with
+    // that. Company names are not globally unique — there are many businesses
+    // called Acme, and one tenant claiming the name locked out every other
+    // customer who shares it. And the message answered a question the caller
+    // has no right to ask: it confirmed whether a given company is on the
+    // platform, turning the public signup form into a tenant-enumeration oracle
+    // for anyone with a list of company names.
+    //
+    // The slug is a URL and must be unique. The display name need not be, and
+    // is stored exactly as the customer typed it.
+    let slug = baseSlug;
+    for (let attempt = 2; attempt <= 100; attempt += 1) {
+      const taken = await prisma.tenant.findUnique({ where: { slug } });
+      if (!taken) break;
+      slug = `${baseSlug}-${attempt}`;
     }
 
     const tenantId = dto.tenantId || randomUUID();
@@ -691,6 +702,16 @@ export class AuthService {
             firstName: user.firstName,
             lastName: user.lastName,
             roles,
+            // The API's RbacGuard reads `permissions` from the token claims —
+            // it does not resolve roles to permissions itself, by design, so a
+            // request costs no database round trip to authorise.
+            //
+            // Without this claim the guard saw an empty permission set and
+            // denied EVERY authorised endpoint with 403, including for a Super
+            // Admin holding "*". Authentication succeeded and authorisation
+            // could not: the two services agreed on the signature and disagreed
+            // on the payload.
+            permissions,
           },
           ACCESS_TOKEN_TTL,
         );
@@ -720,9 +741,9 @@ export class AuthService {
             permissions,
           },
           tenant: {
-            id: (user as any).tenant.id,
-            name: (user as any).tenant.name,
-            slug: (user as any).tenant.slug,
+            id: user.tenant.id,
+            name: user.tenant.name,
+            slug: user.tenant.slug,
           },
         };
       },
@@ -771,6 +792,19 @@ export class AuthService {
         });
         if (!user) throw invalid();
 
+        // Same reason as getProfile: the IdP's User carries a bare tenantId and
+        // has no tenant relation, because § 5.2 keeps identity and business data
+        // in separate databases. The response below reads tenant.name and
+        // tenant.slug, so the record is fetched from the main database here.
+        //
+        // This did not fail earlier only because the service was running from a
+        // stale dist/ — the file did not compile. Deleting dist surfaced it.
+        const tenant = await prisma.tenant.findUnique({
+          where: { id: user.tenantId },
+          select: { id: true, name: true, slug: true },
+        });
+        if (!tenant) throw invalid();
+
         // Rotate: sliding expiry, single valid refresh token per session.
         const nextRefreshToken = randomBytes(32).toString("hex");
         const refreshTtlMs = session.remember_me
@@ -801,6 +835,16 @@ export class AuthService {
             firstName: user.firstName,
             lastName: user.lastName,
             roles,
+            // The API's RbacGuard reads `permissions` from the token claims —
+            // it does not resolve roles to permissions itself, by design, so a
+            // request costs no database round trip to authorise.
+            //
+            // Without this claim the guard saw an empty permission set and
+            // denied EVERY authorised endpoint with 403, including for a Super
+            // Admin holding "*". Authentication succeeded and authorisation
+            // could not: the two services agreed on the signature and disagreed
+            // on the payload.
+            permissions,
           },
           ACCESS_TOKEN_TTL,
         );
@@ -819,9 +863,9 @@ export class AuthService {
             permissions,
           },
           tenant: {
-            id: (user as any).tenant.id,
-            name: (user as any).tenant.name,
-            slug: (user as any).tenant.slug,
+            id: tenant.id,
+            name: tenant.name,
+            slug: tenant.slug,
           },
         };
       },
@@ -1117,6 +1161,32 @@ export class AuthService {
       throw new NotFoundException("User profile not found");
     }
 
+    // The tenant is fetched separately and deliberately.
+    //
+    // This method used to read `(user as any).tenant.id` from the IdP user, but
+    // the IdP schema has no Tenant model and User has no tenant relation — it
+    // carries a bare tenantId. So the expression was always undefined and
+    // /auth/me returned 500 for every user, on the endpoint the web app calls
+    // immediately after login. The `as any` casts are exactly why the compiler
+    // never objected: they asserted a relation that does not exist.
+    //
+    // § 5.2 splits identity from business data, so the tenant record lives in
+    // the main database and is read through the main client.
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: user.tenantId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        demoDataLoaded: true,
+        settings: true,
+      },
+    });
+
+    if (!tenant) {
+      throw new NotFoundException("Tenant not found for this user");
+    }
+
     const { roles, permissions } = await this.resolveRolesAndPermissions(
       user.id,
     );
@@ -1132,13 +1202,12 @@ export class AuthService {
       preferences: user.preferences,
       mfaEnabled: user.mfaEnabled,
       tenant: {
-        id: (user as any).tenant.id,
-        name: (user as any).tenant.name,
-        slug: (user as any).tenant.slug,
-        demoDataLoaded: (user as any).tenant.demoDataLoaded,
+        id: tenant.id,
+        name: tenant.name,
+        slug: tenant.slug,
+        demoDataLoaded: tenant.demoDataLoaded,
         logoUrl:
-          ((user as any).tenant.settings as Record<string, unknown> | null)
-            ?.logoUrl ?? null,
+          (tenant.settings as Record<string, unknown> | null)?.logoUrl ?? null,
       },
     };
   }
