@@ -244,7 +244,7 @@ export class AuthController {
   @Get("me")
   @UseGuards(JwtAuthGuard, RbacGuard)
   async getProfile(@Req() req: AuthenticatedRequest) {
-    return this.authService.getProfile(req.user.userId);
+    return this.authService.getProfile(req.user.userId, req.user.tenantId);
   }
 
   @ApiOperation({ summary: "Update profile" })

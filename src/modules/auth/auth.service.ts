@@ -389,29 +389,59 @@ export class AuthService {
           80,
           "Setting up primary organization structure...",
         );
-        // 5. Create Organization
-        const org = await prisma.organization.create({
-          data: {
-            tenantId: tenant.id,
-            name: dto.organizationName,
-            currency: dto.currency || "USD",
-            timezone: dto.timezone || "UTC",
-          },
-        });
 
-        await updateProgress(90, "Seeding default departments...");
-        // 6. Create Default Departments
-        const depts = ["Finance", "Human Resources", "Sales", "Operations"];
-        for (const deptName of depts) {
-          await prisma.department.create({
-            data: {
-              tenantId: tenant.id,
-              orgId: org.id,
-              name: deptName,
-              code: deptName.toUpperCase(),
-            },
-          });
-        }
+        // 5 & 6. Organization and departments, on the MAIN client — so they
+        // need their own tenant session.
+        //
+        // These models live in the business schema, not the IdP realm (§ 5.2),
+        // so they are written through `prisma` rather than `tx`. That means a
+        // different client on a different connection, and the
+        // `set_config('app.current_tenant_id', …, true)` above is
+        // transaction-local to `tx`'s connection only. Without this wrapper the
+        // inserts arrive with no tenant GUC set and Postgres rejects them:
+        //
+        //   42501: new row violates row-level security policy for table
+        //          "organizations"
+        //
+        // This never surfaced before because the application had only ever been
+        // run as the database owner, which is a superuser, and a superuser
+        // bypasses RLS outright. Running as `unerp_api` (NOBYPASSRLS) — which
+        // § 5.1 requires and the container stack finally does — is what exposed
+        // it. The same § 5.1 lesson as the isolation test: a check performed
+        // over the owner connection proves nothing about the guarantee.
+        const { org } = await runWithTenantSession(
+          { tenantId: tenant.id, userId: user.id },
+          async () => {
+            const created = await prisma.organization.create({
+              data: {
+                tenantId: tenant.id,
+                name: dto.organizationName,
+                currency: dto.currency || "USD",
+                timezone: dto.timezone || "UTC",
+              },
+            });
+
+            await updateProgress(90, "Seeding default departments...");
+            const depts = [
+              "Finance",
+              "Human Resources",
+              "Sales",
+              "Operations",
+            ];
+            for (const deptName of depts) {
+              await prisma.department.create({
+                data: {
+                  tenantId: tenant.id,
+                  orgId: created.id,
+                  name: deptName,
+                  code: deptName.toUpperCase(),
+                },
+              });
+            }
+
+            return { org: created };
+          },
+        );
 
         await updateProgress(
           95,
@@ -449,15 +479,23 @@ export class AuthService {
         });
         const trialStart = new Date();
         const trialEnd = new Date(trialStart.getTime() + TRIAL_DURATION_MS);
-        await prisma.tenantSubscription.create({
-          data: {
-            tenantId: tenant.id,
-            planId: freePlan.id,
-            status: "TRIAL",
-            startDate: trialStart,
-            endDate: trialEnd,
-          },
-        });
+        // Tenant-scoped, on the main client — so it needs a tenant session for
+        // the same reason the organization above does. `saaSPlan` immediately
+        // before it does not: the trial plan is a shared catalogue row and
+        // carries no `tenantId`, which is why it succeeds without one.
+        await runWithTenantSession(
+          { tenantId: tenant.id, userId: user.id },
+          () =>
+            prisma.tenantSubscription.create({
+              data: {
+                tenantId: tenant.id,
+                planId: freePlan.id,
+                status: "TRIAL",
+                startDate: trialStart,
+                endDate: trialEnd,
+              },
+            }),
+        );
 
         return {
           user: {
@@ -609,11 +647,17 @@ export class AuthService {
   /**
    * Resolves a user's role names and flattened permission list.
    */
-  private async resolveRolesAndPermissions(userId: string) {
-    const userRoles = (await idpPrisma.userRole.findMany({
-      where: { userId },
-      include: { role: true },
-    })) as unknown as Array<IdpModels.UserRole & { role: IdpModels.Role }>;
+  private async resolveRolesAndPermissions(userId: string, tenantId?: string) {
+    // UserRole has no tenantId of its own, but it `include`s Role, which is
+    // RLS-protected. § 5.1: a join table is exempt from where-clause injection
+    // and NOT from the session GUC, because the relation it pulls in is
+    // tenant-scoped. Without a session this returns roles with empty relations
+    // under the NOBYPASSRLS role — or throws, which is what it did.
+    const fetchRoles = () =>
+      idpPrisma.userRole.findMany({ where: { userId }, include: { role: true } });
+    const userRoles = (await (tenantId
+      ? runWithTenantSession({ tenantId, userId }, fetchRoles)
+      : fetchRoles())) as unknown as Array<IdpModels.UserRole & { role: IdpModels.Role }>;
 
     const roles = userRoles.map((ur) => ur.role.name);
     const permissions: string[] = [];
@@ -1152,10 +1196,16 @@ export class AuthService {
   /**
    * Returns profile data of the currently authenticated user.
    */
-  async getProfile(userId: string) {
-    const user = await idpPrisma.user.findUnique({
-      where: { id: userId },
-    });
+  async getProfile(userId: string, tenantId: string) {
+    // Wrapped in a tenant session because `idpPrisma` now enforces RLS.
+    //
+    // This was an unscoped read on the IdP client. That was invisible while
+    // the client had no tenant-context extension and the app connected as the
+    // superuser owner; with both fixed, the user row is simply not visible and
+    // the endpoint answered 404 for a user who had just logged in successfully.
+    const user = await runWithTenantSession({ tenantId, userId }, () =>
+      idpPrisma.user.findUnique({ where: { id: userId } }),
+    );
 
     if (!user) {
       throw new NotFoundException("User profile not found");
@@ -1189,6 +1239,7 @@ export class AuthService {
 
     const { roles, permissions } = await this.resolveRolesAndPermissions(
       user.id,
+      tenantId,
     );
 
     return {
