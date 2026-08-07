@@ -1,0 +1,27 @@
+# Run the platform policy gate against this repository's own source.
+#
+# This file declares WHICH gate applies. It contains no rule logic — that lives once, in
+# unierp-workspace/.github/workflows/policy-gate.yml, driven by scripts/ci/check-policy.mjs.
+#
+# Phase A30, defect D024: those rules used to run in unierp-workspace, which is checked out
+# alone in CI and therefore could not see this repository's files. Every one of them silently
+# returned 0 — a clean reading over untouched debt — while the single rule honest enough to
+# report a missing target kept main red. The script now comes to the code.
+#
+# .quality-policy-baseline.json in this repo is the ratchet. It may fall, never rise.
+name: Policy gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    uses: kannan19302/unierp-workspace/.github/workflows/policy-gate.yml@main
+    with:
+      repo: unierp-idp
