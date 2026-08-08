@@ -6,15 +6,9 @@ on:
   pull_request:
 
 jobs:
-  static:
-    name: Static
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm install --no-audit --no-fund
-      - name: Typecheck
-        run: npx tsc --noEmit
-        if: hashFiles('tsconfig.json') != ''
+  app-gate:
+    uses: kannan19302/unierp-workspace/.github/workflows/application-gate.yml@main
+  policy-gate:
+    uses: kannan19302/unierp-workspace/.github/workflows/policy-gate.yml@main
+    with:
+      repo: unierp-idp
