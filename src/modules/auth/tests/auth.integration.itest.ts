@@ -6,8 +6,8 @@
  * failures, single-use password reset, and the MFA challenge/verify handshake.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { idpPrisma, prisma } from "@unerp/database";
-import { hashPassword, verifyTypedToken, TOKEN_TYPE } from "@unerp/auth";
+import { idpPrisma, prisma } from "@kannan19302/database";
+import { hashPassword, verifyTypedToken, TOKEN_TYPE } from "@kannan19302/auth";
 import { authenticator } from "otplib";
 import { AuthService } from "../auth.service";
 import { JwtAuthGuard } from "../../../common/guards/jwt-auth.guard";
@@ -183,7 +183,7 @@ describe("auth integration (live DB)", () => {
     );
 
     // Revoke, then the very same token is rejected.
-    const decoded = (await import("@unerp/auth")).verifyToken(res.token) as {
+    const decoded = (await import("@kannan19302/auth")).verifyToken(res.token) as {
       sid: string;
     };
     await svc.revokeSessionById(decoded.sid);

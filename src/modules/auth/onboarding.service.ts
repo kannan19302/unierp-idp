@@ -3,11 +3,11 @@ import {
   NotFoundException,
   BadRequestException,
 } from "@nestjs/common";
-import { idpPrisma, prisma } from "@unerp/database";
+import { idpPrisma, prisma } from "@kannan19302/database";
 import {
   onboardingChecklistResponseSchema,
   type OnboardingChecklistResponse,
-} from "@unerp/shared";
+} from "@kannan19302/shared";
 import {
   INDUSTRY_APP_PRIORITY,
   DEFAULT_APP_PRIORITY,

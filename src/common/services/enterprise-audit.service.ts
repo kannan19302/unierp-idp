@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException } from "@nestjs/common";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { Response } from "express";
-import { idpPrisma, prisma } from "@unerp/database";
+import { idpPrisma, prisma } from "@kannan19302/database";
 import {
   buildPaginationValues,
   paginatedResult,

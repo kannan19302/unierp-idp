@@ -77,7 +77,7 @@ export async function resolveOrgId(
   orgId?: string,
 ): Promise<string> {
   if (orgId && orgId !== "org-system-default") return orgId;
-  const { prisma } = await import("@unerp/database");
+  const { prisma } = await import("@kannan19302/database");
   const org = await prisma.organization.findFirst({
     where: { tenantId },
     select: { id: true },

@@ -3,8 +3,8 @@ import {
   BadRequestException,
   NotFoundException,
 } from "@nestjs/common";
-import { idpPrisma, prisma, runWithTenantSession } from "@unerp/database";
-import { signSessionToken } from "@unerp/auth";
+import { idpPrisma, prisma, runWithTenantSession } from "@kannan19302/database";
+import { signSessionToken } from "@kannan19302/auth";
 
 interface SsoProfile {
   email: string;

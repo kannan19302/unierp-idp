@@ -3,7 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from "@nestjs/common";
-import { idpPrisma, prisma } from "@unerp/database";
+import { idpPrisma, prisma } from "@kannan19302/database";
 import {
   ModuleSettingsSchema,
   AppSettingResponse,

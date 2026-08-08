@@ -5,7 +5,7 @@ import {
   Logger,
   ForbiddenException,
 } from "@nestjs/common";
-import { idpPrisma, prisma, runWithTenantSession } from "@unerp/database";
+import { idpPrisma, prisma, runWithTenantSession } from "@kannan19302/database";
 import { randomBytes, createHash } from "node:crypto";
 
 const hashToken = (token: string) =>

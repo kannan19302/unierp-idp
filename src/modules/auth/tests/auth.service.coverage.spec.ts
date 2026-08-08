@@ -12,7 +12,7 @@ vi.mock("@prisma/client-idp", () => ({
   },
 }));
 
-vi.mock("@unerp/database", () => ({
+vi.mock("@kannan19302/database", () => ({
   prisma: {
     tenant: {
       findMany: vi.fn().mockResolvedValue([]),

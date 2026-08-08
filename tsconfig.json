@@ -1,5 +1,5 @@
 {
-  "extends": "@unerp/config/typescript/nestjs.json",
+  "extends": "@kannan19302/config/typescript/nestjs.json",
   "compilerOptions": {
     "baseUrl": ".",
     "outDir": "./dist",

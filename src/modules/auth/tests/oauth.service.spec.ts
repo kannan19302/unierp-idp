@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("@unerp/database", () => ({
+vi.mock("@kannan19302/database", () => ({
   prisma: {
     $queryRaw: vi.fn().mockResolvedValue([]),
     tenant: { findUnique: vi.fn() },

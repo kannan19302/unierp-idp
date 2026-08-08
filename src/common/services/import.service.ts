@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException } from "@nestjs/common";
 import { EventEmitter2 } from "@nestjs/event-emitter";
-import { idpPrisma, prisma } from "@unerp/database";
+import { idpPrisma, prisma } from "@kannan19302/database";
 
 interface ImportOptions {
   skipDuplicates?: boolean;

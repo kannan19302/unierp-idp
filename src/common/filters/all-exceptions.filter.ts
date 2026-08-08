@@ -6,10 +6,10 @@ import {
   HttpStatus,
 } from "@nestjs/common";
 import type { Request, Response } from "express";
-import { IdpPrismaTypes as Prisma } from "@unerp/database";
+import { IdpPrismaTypes as Prisma } from "@kannan19302/database";
 import { ZodError } from "zod";
-import { RecordNotFoundForUpdateError, StaleWriteError } from "@unerp/database";
-import { codeForStatus, type ErrorEnvelope } from "@unerp/shared";
+import { RecordNotFoundForUpdateError, StaleWriteError } from "@kannan19302/database";
+import { codeForStatus, type ErrorEnvelope } from "@kannan19302/shared";
 import { pinoLogger } from "../services/logger.service";
 
 const REQUEST_ID_HEADER = "x-request-id";

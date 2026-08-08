@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import { idpPrisma, prisma } from "@unerp/database";
+import { idpPrisma, prisma } from "@kannan19302/database";
 
 /**
  * Connects the admin "Background Jobs" UI (which reads the `BackgroundJob` Prisma table)

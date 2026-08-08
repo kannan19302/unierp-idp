@@ -7,7 +7,7 @@ import {
 } from "@nestjs/common";
 import { Observable, from } from "rxjs";
 import { switchMap } from "rxjs/operators";
-import { idpPrisma, prisma } from "@unerp/database";
+import { idpPrisma, prisma } from "@kannan19302/database";
 import { moduleSlugForSegment, isKernelSlug } from "../app-slug-map";
 
 /**

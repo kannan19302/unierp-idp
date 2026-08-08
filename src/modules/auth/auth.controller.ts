@@ -48,7 +48,7 @@ import {
   verifyOtpSchema,
   SendOtpInput,
   VerifyOtpInput,
-} from "@unerp/shared";
+} from "@kannan19302/shared";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 
 const AUTH_COOKIE = "auth_token";
@@ -256,7 +256,7 @@ export class AuthController {
     @ZodBody(z.any()) body: Record<string, unknown>,
   ) {
     const validationPipe = new ZodValidationPipe(
-      require("@unerp/shared").updateProfileSchema,
+      require("@kannan19302/shared").updateProfileSchema,
     );
     const dto = validationPipe.transform(body, {
       type: "body",

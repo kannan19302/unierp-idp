@@ -5,8 +5,8 @@ import {
   ForbiddenException,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { idpPrisma, prisma, runWithTenantSession } from "@unerp/database";
-import { hasPermission } from "@unerp/auth";
+import { idpPrisma, prisma, runWithTenantSession } from "@kannan19302/database";
+import { hasPermission } from "@kannan19302/auth";
 import { PERMISSIONS_KEY } from "../decorators/permissions.decorator";
 
 @Injectable()

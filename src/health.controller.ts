@@ -8,7 +8,7 @@ import {
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
-import { idpPrisma, prisma } from "@unerp/database";
+import { idpPrisma, prisma } from "@kannan19302/database";
 
 type CheckStatus = "up" | "down";
 

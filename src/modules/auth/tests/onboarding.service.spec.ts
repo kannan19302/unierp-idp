@@ -3,7 +3,7 @@ import { OnboardingService } from "../onboarding.service";
 import { NotFoundException, BadRequestException } from "@nestjs/common";
 
 // Mock the database client
-vi.mock("@unerp/database", () => {
+vi.mock("@kannan19302/database", () => {
   const mockTenantUpdate = vi.fn();
   const mockTenantFindUnique = vi.fn();
   const mockOrgFindFirst = vi.fn();
@@ -72,7 +72,7 @@ vi.mock("@unerp/database", () => {
 });
 
 // Helper to access mock functions
-import { idpPrisma, prisma } from "@unerp/database";
+import { idpPrisma, prisma } from "@kannan19302/database";
 const tenantMocks = prisma.tenant as any;
 const orgMocks = prisma.organization as any;
 const userMocks = prisma.user as any;

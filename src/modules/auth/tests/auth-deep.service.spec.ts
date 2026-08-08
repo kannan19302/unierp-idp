@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AuthDeepService } from "../auth-deep.service";
-import { idpPrisma, prisma } from "@unerp/database";
+import { idpPrisma, prisma } from "@kannan19302/database";
 
-vi.mock("@unerp/database", () => {
+vi.mock("@kannan19302/database", () => {
   // Identity models (user, role, userSession, ...) are read through
   // `idpPrisma`, not `prisma` Ã¢â‚¬â€ this spec predates that split and stubs
   // them under `prisma`. Exporting the same stub object under both names

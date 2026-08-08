@@ -2,13 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [ "main" ]
   pull_request:
+    branches: [ "main" ]
 
 jobs:
-  app-gate:
-    uses: kannan19302/unierp-workspace/.github/workflows/application-gate.yml@main
-  policy-gate:
-    uses: kannan19302/unierp-workspace/.github/workflows/policy-gate.yml@main
-    with:
-      repo: unierp-idp
+  ci:
+    uses: kannan19302/unierp-workspace/.github/workflows/reusable-ci.yml@main

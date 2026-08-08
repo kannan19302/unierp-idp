@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AuthService } from "../auth.service";
-import { idpPrisma } from "@unerp/database";
+import { idpPrisma } from "@kannan19302/database";
 
 // Mock the database client
-vi.mock("@unerp/database", () => {
+vi.mock("@kannan19302/database", () => {
   // Identity models (user, role, userSession, ...) are read through
   // `idpPrisma`, not `prisma` â€” this spec predates that split and stubs
   // them under `prisma`. Exporting the same stub object under both names
@@ -100,7 +100,7 @@ vi.mock("@unerp/database", () => {
 });
 
 // Mock the auth utilities
-vi.mock("@unerp/auth", () => {
+vi.mock("@kannan19302/auth", () => {
   return {
     hashPassword: vi.fn().mockResolvedValue("hashed_pass_123"),
     comparePassword: vi.fn().mockResolvedValue(true),
@@ -139,7 +139,7 @@ describe("AuthService", () => {
 
   describe("register", () => {
     it("should register a tenant and return registration credentials", async () => {
-      const { prisma } = await import("@unerp/database");
+      const { prisma } = await import("@kannan19302/database");
       vi.mocked(prisma.tenant.findUnique).mockResolvedValue(null);
       // NOTE: register() opens `idpPrisma.$transaction` but creates the tenant
       // through the OUTER `prisma` client, because Tenant lives in the main
@@ -189,7 +189,7 @@ describe("AuthService", () => {
 
   describe("verifyEmail", () => {
     it("rejects an unknown or expired token", async () => {
-      const { prisma } = await import("@unerp/database");
+      const { prisma } = await import("@kannan19302/database");
       vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
 
       await expect(
@@ -198,7 +198,7 @@ describe("AuthService", () => {
     });
 
     it("marks the user verified and burns tokens for a valid token", async () => {
-      const { prisma } = await import("@unerp/database");
+      const { prisma } = await import("@kannan19302/database");
       vi.mocked(prisma.$queryRaw).mockResolvedValue([
         {
           id: "evt-1",
@@ -217,7 +217,7 @@ describe("AuthService", () => {
 
   describe("refreshSession", () => {
     it("rejects an unknown refresh token", async () => {
-      const { prisma } = await import("@unerp/database");
+      const { prisma } = await import("@kannan19302/database");
       vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
 
       await expect(authService.refreshSession("0".repeat(64))).rejects.toThrow(
@@ -226,7 +226,7 @@ describe("AuthService", () => {
     });
 
     it("rejects an expired or inactive session", async () => {
-      const { prisma } = await import("@unerp/database");
+      const { prisma } = await import("@kannan19302/database");
       vi.mocked(prisma.$queryRaw).mockResolvedValue([
         {
           id: "sess-1",
@@ -244,7 +244,7 @@ describe("AuthService", () => {
     });
 
     it("rotates the refresh token and issues a new access token", async () => {
-      const { prisma } = await import("@unerp/database");
+      const { prisma } = await import("@kannan19302/database");
       vi.mocked(prisma.$queryRaw).mockResolvedValue([
         {
           id: "sess-1",
@@ -300,7 +300,7 @@ describe("AuthService", () => {
 
   describe("resendVerification", () => {
     it("returns the generic message for unknown emails", async () => {
-      const { prisma } = await import("@unerp/database");
+      const { prisma } = await import("@kannan19302/database");
       vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
 
       const result = await authService.resendVerification({

@@ -8,7 +8,7 @@ import {
 } from "node:crypto";
 import { authenticator } from "otplib";
 import QRCode from "qrcode";
-import { hashPassword, comparePassword } from "@unerp/auth";
+import { hashPassword, comparePassword } from "@kannan19302/auth";
 
 const TOTP_ISSUER = "UniERP";
 

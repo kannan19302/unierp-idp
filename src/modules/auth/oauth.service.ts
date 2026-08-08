@@ -5,8 +5,8 @@ import {
   Logger,
 } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
-import { idpPrisma, prisma, runWithTenantSession } from "@unerp/database";
-import { signTypedToken, verifyTypedToken, TOKEN_TYPE } from "@unerp/auth";
+import { idpPrisma, prisma, runWithTenantSession } from "@kannan19302/database";
+import { signTypedToken, verifyTypedToken, TOKEN_TYPE } from "@kannan19302/auth";
 import { AuthService, SessionContext } from "./auth.service";
 import { PlatformCredentialsService } from "../../common/platform-credentials/platform-credentials.service";
 

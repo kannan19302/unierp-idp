@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
-import { prisma, encryptField, decryptField } from "@unerp/database";
+import { prisma, encryptField, decryptField } from "@kannan19302/database";
 import {
   findProviderSpec,
   PLATFORM_CREDENTIAL_PROVIDERS,

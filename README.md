@@ -41,7 +41,7 @@ docker compose -f docker-compose.dev.yml --profile idp up -d idp
 ```
 
 This repository cannot yet build its own image. Its `package.json` still
-resolves `@unerp/*` through `workspace:*` specifiers, which name nothing
+resolves `@kannan19302/*` through `workspace:*` specifiers, which name nothing
 outside the monorepo, and its scripts reach for `../../scripts/*`. Extraction
 copied the tree faithfully; it did not make the tree standalone, and § 14 is
 explicit that the monorepo stays buildable until every consumer has switched.
@@ -49,7 +49,7 @@ explicit that the monorepo stays buildable until every consumer has switched.
 What unblocks a per-repo image is a package registry that CI can reach. The
 self-hosted Verdaccio in `unierp-infra/registry/` answers on localhost only,
 which is why the first cutover was reverted (`ERPSys` a96069e6): every
-`pnpm install --frozen-lockfile` on a runner resolved `@unerp` against the
+`pnpm install --frozen-lockfile` on a runner resolved `@kannan19302` against the
 runner's own localhost and failed.
 
 Shared services — PostgreSQL, Redis, MinIO — come from

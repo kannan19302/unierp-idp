@@ -101,7 +101,7 @@ export const envSchema = z.object({
     ),
   VAPID_SUBJECT: z
     .string()
-    .default("mailto:admin@unerp.dev")
+    .default("mailto:admin@kannan19302.dev")
     .describe("Contact URI (mailto: or https:) sent with VAPID push requests"),
 
   // ── File storage (S3 / MinIO) ──────────────────────────────────────────
@@ -127,7 +127,7 @@ export const envSchema = z.object({
   SMTP_PASSWORD: z.string().optional().describe("SMTP password"),
   SMTP_FROM: z
     .string()
-    .default("noreply@unerp.dev")
+    .default("noreply@kannan19302.dev")
     .describe("From address for system email"),
 
   // ── OAuth integrations (optional feature unlocks) ──────────────────────

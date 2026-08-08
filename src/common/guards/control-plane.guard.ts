@@ -6,8 +6,8 @@ import {
   Logger,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { CONTROL_PLANE_NAMESPACES, hasPermission } from "@unerp/shared";
-import { idpPrisma, prisma, runWithTenantSession } from "@unerp/database";
+import { CONTROL_PLANE_NAMESPACES, hasPermission } from "@kannan19302/shared";
+import { idpPrisma, prisma, runWithTenantSession } from "@kannan19302/database";
 import { PERMISSIONS_KEY } from "../decorators/permissions.decorator";
 import { SKIP_TENANT_SCOPE_KEY } from "../decorators/skip-tenant-scope.decorator";
 

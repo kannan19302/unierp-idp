@@ -11,8 +11,8 @@ import { Queue } from "bullmq";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { randomBytes, createHash, randomUUID, randomInt } from "node:crypto";
 import * as webPush from "web-push";
-import { idpPrisma, prisma, runWithTenantSession } from "@unerp/database";
-import { IdpModels } from "@unerp/database";
+import { idpPrisma, prisma, runWithTenantSession } from "@kannan19302/database";
+import { IdpModels } from "@kannan19302/database";
 import {
   hashPassword,
   comparePassword,
@@ -20,7 +20,7 @@ import {
   signTypedToken,
   verifyTypedToken,
   TOKEN_TYPE,
-} from "@unerp/auth";
+} from "@kannan19302/auth";
 import {
   RegisterInput,
   LoginInput,
@@ -28,7 +28,7 @@ import {
   ResetPasswordInput,
   VerifyEmailInput,
   ResendVerificationInput,
-} from "@unerp/shared";
+} from "@kannan19302/shared";
 import {
   generateTotpSecret,
   buildTotpEnrollment,
@@ -165,7 +165,7 @@ export class AuthService {
     const privateKey = creds.privateKey || process.env.VAPID_PRIVATE_KEY;
     if (!publicKey || !privateKey) return false;
     webPush.setVapidDetails(
-      creds.subject || process.env.VAPID_SUBJECT || "mailto:admin@unerp.dev",
+      creds.subject || process.env.VAPID_SUBJECT || "mailto:admin@kannan19302.dev",
       publicKey,
       privateKey,
     );
@@ -1268,7 +1268,7 @@ export class AuthService {
    */
   async updateProfile(
     userId: string,
-    dto: import("@unerp/shared").UpdateProfileInput,
+    dto: import("@kannan19302/shared").UpdateProfileInput,
   ) {
     const user = await idpPrisma.user.findUnique({
       where: { id: userId },
@@ -1504,7 +1504,7 @@ export class AuthService {
    */
   async loginDemo() {
     const target = {
-      email: "admin@unerp.dev",
+      email: "admin@kannan19302.dev",
       firstName: "System",
       lastName: "Administrator",
       roleName: "Super Admin",

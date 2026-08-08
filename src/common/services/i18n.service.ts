@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { idpPrisma, prisma } from "@unerp/database";
+import { idpPrisma, prisma } from "@kannan19302/database";
 
 const BUILT_IN_TRANSLATIONS: Record<string, Record<string, string>> = {
   en: {},

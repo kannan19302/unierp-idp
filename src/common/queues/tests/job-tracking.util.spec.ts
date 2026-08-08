@@ -12,7 +12,7 @@ const { mockBackgroundJob } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@unerp/database", () => ({
+vi.mock("@kannan19302/database", () => ({
   prisma: {
     backgroundJob: mockBackgroundJob,
   },
