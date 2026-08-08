@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "architecture:check": "node ../../scripts/check-module-boundaries.mjs && pnpm exec depcruise --config .dependency-cruiser.cjs src --output-type err",
+    "architecture:check": "node scripts/check-module-boundaries.mjs && pnpm exec depcruise --config .dependency-cruiser.cjs src --output-type err",
     "clean": "rimraf dist"
   },
   "dependencies": {
