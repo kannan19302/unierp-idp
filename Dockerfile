@@ -12,12 +12,12 @@
 # building.
 
 # ── build ───────────────────────────────────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM node:22-slim AS builder
 WORKDIR /app
 
 # openssl is Prisma's runtime requirement, and python3/make/g++ are needed by
 # isolated-vm, which the § 8.3 extension sandbox compiles from source.
-RUN apk add --no-cache openssl python3 make g++
+RUN apt-get update && apt-get install -y openssl python3 make g++
 
 # Manifests first, so a source-only change does not re-resolve the tree.
 # The repository's own .npmrc is deliberately NOT copied.
@@ -36,7 +36,7 @@ COPY package.json package-lock.json* ./
 # the request's Host header, so the registry this file names is also the host
 # the tarballs will be fetched from.
 ARG UNIERP_REGISTRY=http://host.docker.internal:4873/
-RUN printf '@unerp:registry=%s\nregistry=https://registry.npmjs.org/\n' "$UNIERP_REGISTRY" > .npmrc \
+RUN printf '@kannan19302:registry=%s\nregistry=https://registry.npmjs.org/\n' "$UNIERP_REGISTRY" > .npmrc \
  # package-lock.json records the absolute tarball URL each dependency resolved
  # to, so a lockfile written against a registry on `localhost` is a lockfile
  # that only installs on the machine that wrote it. Inside a container
@@ -49,9 +49,7 @@ RUN printf '@unerp:registry=%s\nregistry=https://registry.npmjs.org/\n' "$UNIERP
  # durable fix is a registry addressed by a name that resolves the same way
  # everywhere; until § 14.1's "a registry CI can reach" decision is taken, this
  # is the honest workaround rather than dropping the lockfile.
- && if [ -f package-lock.json ]; then \
-      sed -i "s#http://localhost:4873/#${UNIERP_REGISTRY}#g" package-lock.json; \
-    fi \
+ && rm -f package-lock.json \
  && npm install --no-audit --no-fund
 
 # @unerp/database generates its Prisma clients in a postinstall, and the
@@ -65,10 +63,10 @@ COPY src ./src
 RUN npm run build
 
 # ── runtime ─────────────────────────────────────────────────────────────────
-FROM node:22-alpine AS runner
+FROM node:22-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-RUN apk add --no-cache openssl
+RUN apt-get update && apt-get install -y openssl
 
 # The generated Prisma client lives in node_modules, so it has to come across
 # with it rather than being regenerated in an image with no schema.
