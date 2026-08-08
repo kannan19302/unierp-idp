@@ -680,7 +680,7 @@ export class AuthService {
   async issueSession(
     user: any,
     context?: SessionContext,
-    opts?: { rememberMe?: boolean },
+    opts?: { rememberMe?: boolean; realm?: "tenant" | "provider" },
   ) {
     if (!user.tenant) {
       user.tenant = await prisma.tenant.findUnique({
@@ -742,19 +742,13 @@ export class AuthService {
             sid,
             userId: user.id,
             tenantId: user.tenantId,
+            realm: opts?.realm ?? "tenant",
+            amr: user.authMethods?.filter((m: any) => m.type !== "PASSWORD").map((m: any) => m.type.toLowerCase()) ?? [],
+            mfaVerified: false,
             email: user.email,
             firstName: user.firstName,
             lastName: user.lastName,
             roles,
-            // The API's RbacGuard reads `permissions` from the token claims —
-            // it does not resolve roles to permissions itself, by design, so a
-            // request costs no database round trip to authorise.
-            //
-            // Without this claim the guard saw an empty permission set and
-            // denied EVERY authorised endpoint with 403, including for a Super
-            // Admin holding "*". Authentication succeeded and authorisation
-            // could not: the two services agreed on the signature and disagreed
-            // on the payload.
             permissions,
           },
           ACCESS_TOKEN_TTL,
@@ -875,19 +869,13 @@ export class AuthService {
             sid: session.id,
             userId: user.id,
             tenantId: user.tenantId,
+            realm: tenant.slug === "provider" ? "provider" : "tenant",
+            amr: (user as any).authMethods?.filter((m: any) => m.type !== "PASSWORD").map((m: any) => m.type.toLowerCase()) ?? [],
+            mfaVerified: true,
             email: user.email,
             firstName: user.firstName,
             lastName: user.lastName,
             roles,
-            // The API's RbacGuard reads `permissions` from the token claims —
-            // it does not resolve roles to permissions itself, by design, so a
-            // request costs no database round trip to authorise.
-            //
-            // Without this claim the guard saw an empty permission set and
-            // denied EVERY authorised endpoint with 403, including for a Super
-            // Admin holding "*". Authentication succeeded and authorisation
-            // could not: the two services agreed on the signature and disagreed
-            // on the payload.
             permissions,
           },
           ACCESS_TOKEN_TTL,
@@ -960,6 +948,54 @@ export class AuthService {
       }
     }
 
+    return this.authenticateInternal(
+        tenantId,
+        dto,
+        context,
+        "tenant"
+    );
+  }
+
+  /**
+   * Authenticates a control-plane provider staff and issues a provider realm token.
+   */
+  async providerLogin(
+    dto: LoginInput,
+    context?: SessionContext,
+  ) {
+    const tenant = await prisma.tenant.findUnique({
+      where: { slug: "provider" },
+    });
+    
+    if (!tenant) {
+      throw new UnauthorizedException("Provider realm not configured");
+    }
+
+    const users = await prisma.$queryRaw<
+      Array<{ id: string; tenant_id: string }>
+    >`
+      SELECT id, tenant_id FROM auth_lookup_user_tenants(${dto.email.toLowerCase()})
+      WHERE tenant_id = ${tenant.id}
+    `;
+
+    if (users.length === 0) {
+      throw new UnauthorizedException("Invalid credentials");
+    }
+
+    return this.authenticateInternal(
+      tenant.id,
+      dto,
+      context,
+      "provider"
+    );
+  }
+
+  private async authenticateInternal(
+    tenantId: string,
+    dto: LoginInput,
+    context?: SessionContext,
+    realm: "tenant" | "provider" = "tenant",
+  ) {
     // Find user within the specified tenant scope. Run inside a tenant
     // session so the RLS-enforcing unerp_api role can see the row.
     const user = await runWithTenantSession({ tenantId, userId: "" }, () =>
@@ -967,9 +1003,6 @@ export class AuthService {
         where: {
           tenantId,
           email: dto.email.toLowerCase(),
-        },
-        include: {
-          /* tenant: true */
         },
       }),
     );
@@ -1083,7 +1116,7 @@ export class AuthService {
       } as const;
     }
 
-    return this.issueSession(user, context, { rememberMe: dto.rememberMe });
+    return this.issueSession(user, context, { rememberMe: dto.rememberMe, realm });
   }
 
   /**

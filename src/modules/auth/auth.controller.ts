@@ -22,6 +22,7 @@ import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiConsumes } from "@nestjs/swagger";
 import { RbacGuard } from "../../common/guards/rbac.guard";
 import { Permissions } from "../../common/decorators/permissions.decorator";
+import { SkipTenantScope } from "../../common/decorators/skip-tenant-scope.decorator";
 import { z } from "zod";
 import { ZodBody } from "../../common/decorators/zod-body.decorator";
 import { Request, Response } from "express";
@@ -191,6 +192,34 @@ export class AuthController {
     );
 
     // Only a completed login carries a session token; an MFA challenge does not.
+    if ("token" in result) {
+      return sealSessionCookies(result as SessionResult, res);
+    }
+
+    return result;
+  }
+
+  @SkipTenantScope()
+  @Permissions("auth.create")
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post("provider/login")
+  @HttpCode(HttpStatus.OK)
+  async providerLogin(
+    @ZodBody(z.any()) body: Record<string, unknown>,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const validationPipe = new ZodValidationPipe(loginSchema);
+    const loginData = validationPipe.transform(body, {
+      type: "body",
+      metatype: Object,
+    }) as LoginInput;
+
+    const result = await this.authService.providerLogin(
+      loginData,
+      sessionContext(req),
+    );
+
     if ("token" in result) {
       return sealSessionCookies(result as SessionResult, res);
     }
