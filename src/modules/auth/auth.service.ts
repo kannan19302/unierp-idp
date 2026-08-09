@@ -680,7 +680,7 @@ export class AuthService {
   async issueSession(
     user: any,
     context?: SessionContext,
-    opts?: { rememberMe?: boolean; realm?: "tenant" | "provider" },
+    opts?: { rememberMe?: boolean; realm?: "tenant" | "provider"; mfaVerified?: boolean },
   ) {
     if (!user.tenant) {
       user.tenant = await prisma.tenant.findUnique({
@@ -744,7 +744,7 @@ export class AuthService {
             tenantId: user.tenantId,
             realm: opts?.realm ?? "tenant",
             amr: user.authMethods?.filter((m: any) => m.type !== "PASSWORD").map((m: any) => m.type.toLowerCase()) ?? [],
-            mfaVerified: false,
+            mfaVerified: opts?.mfaVerified ?? false,
             email: user.email,
             firstName: user.firstName,
             lastName: user.lastName,
@@ -1728,7 +1728,7 @@ export class AuthService {
       });
     }
 
-    return this.issueSession(user, context);
+    return this.issueSession(user, context, { mfaVerified: true });
   }
 
   /**
