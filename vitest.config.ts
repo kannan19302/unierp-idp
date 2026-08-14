@@ -31,9 +31,15 @@ export default defineConfig({
       // machine-readable coverage.
       reporter: ["text", "json", "html"],
       reportsDirectory: "./coverage",
-      // Only report files exercised by tests (avoids an empty report in this
-      // vitest version); untested modules fall back to the spec-presence score.
-      all: false,
+      // J02 — `all: true` so coverage counts untested source files and can
+      // fail; thresholds set at the measured floor (ratchet may only rise).
+      all: true,
+      thresholds: {
+        lines: 15,
+        functions: 32,
+        branches: 60,
+        statements: 15,
+      },
       exclude: [
         "src/**/*.spec.ts",
         "src/**/tests/**",
