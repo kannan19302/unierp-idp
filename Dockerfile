@@ -60,6 +60,15 @@ ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
 
 COPY tsconfig.json nest-cli.json ./
 COPY src ./src
+
+# ── dev ─────────────────────────────────────────────────────────────────────
+FROM builder AS dev
+ENV NODE_ENV=development
+EXPOSE 3005
+CMD ["npx", "nest", "start", "--watch"]
+
+# ── build ───────────────────────────────────────────────────────────────────
+FROM dev AS prod-builder
 RUN npm run build
 
 # ── runtime ─────────────────────────────────────────────────────────────────
@@ -70,9 +79,9 @@ RUN apt-get update && apt-get install -y openssl
 
 # The generated Prisma client lives in node_modules, so it has to come across
 # with it rather than being regenerated in an image with no schema.
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/package.json ./package.json
+COPY --from=prod-builder /app/node_modules ./node_modules
+COPY --from=prod-builder /app/dist ./dist
+COPY --from=prod-builder /app/package.json ./package.json
 
 EXPOSE 3005
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
