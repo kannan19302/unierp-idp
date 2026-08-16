@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-density="comfortable">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UniERP Global Sign-In — Master SSO Gateway &amp; Multi-Tenant Realm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="wizard.css">
+</head>
+<body class="login-body">
+
+  <!-- Background decorative ambient layers -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+  <div class="ambient-glow glow-3"></div>
+
+  <!-- Top Login Navigation Bar -->
+  <header class="login-navbar">
+    <div class="nav-brand">
+      <a href="/" class="brand-link">
+        <div class="logo-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">UniERP <span class="badge-portal">Global Auth Gateway</span></span>
+          <span class="brand-subtitle">Master Single Sign-On &amp; Multi-Tenant Identity</span>
+        </div>
+      </a>
+    </div>
+
+    <!-- Theme & Density Controls -->
+    <div class="nav-actions">
+      <!-- Theme Switcher Dropdown -->
+      <div class="theme-picker-container">
+        <label for="themeSelect" class="sr-only">Theme</label>
+        <select id="themeSelect" class="theme-select" title="Select Theme">
+          <option value="dark">🌙 Dark Theme</option>
+          <option value="light">☀️ Light Theme</option>
+          <option value="enterprise">🏢 Enterprise Theme</option>
+          <option value="modern">✨ Modern Theme</option>
+          <option value="minimal">⚪ Minimal Theme</option>
+          <option value="classic">🏛️ Classic Theme</option>
+          <option value="high-contrast">👁️ High Contrast (AAA)</option>
+        </select>
+      </div>
+
+      <!-- Density Toggle -->
+      <button class="btn-density-toggle" id="btnDensityToggle" title="Toggle Density Scale (Comfortable / Compact)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+        <span id="densityLabel">Compact</span>
+      </button>
+
+      <!-- Return to Platform Gateway Link -->
+      <a href="/" class="btn-back-hub">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+        <span>Platform Hub</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- Main Login Container -->
+  <main class="login-main-container">
+    <div class="login-wrapper">
+
+      <!-- Left Hero Showcase Column -->
+      <div class="login-hero-pane">
+        <div class="hero-chip">
+          <span class="pulse-indicator"></span>
+          <span>Unified Multi-Tenant Identity Provider (IdP)</span>
+        </div>
+        <h1 class="login-hero-title">One Identity.<br><span class="gradient-text">10 Connected Platforms.</span></h1>
+        <p class="login-hero-desc">
+          Authenticate once to unlock your organization's entire UniERP enterprise surface. Role-isolated security boundaries ensure strict tenant data segregation and instantaneous SSO delegation.
+        </p>
+
+        <!-- Platform Ecosystem Pills Preview -->
+        <div class="ecosystem-pills-cluster">
+          <div class="eco-pill"><span class="eco-dot"></span> P1 Marketing Site</div>
+          <div class="eco-pill"><span class="eco-dot"></span> P3 Tenant ERP (45 Modules)</div>
+          <div class="eco-pill"><span class="eco-dot"></span> P5 Web Studio Builder</div>
+          <div class="eco-pill"><span class="eco-dot"></span> P6 Tenant Admin</div>
+          <div class="eco-pill"><span class="eco-dot"></span> P7 Marketplace</div>
+          <div class="eco-pill"><span class="eco-dot"></span> P8 Developer Platform</div>
+          <div class="eco-pill"><span class="eco-dot"></span> P9 Mobile Client</div>
+          <div class="eco-pill"><span class="eco-dot"></span> P10 Desktop App</div>
+        </div>
+
+        <!-- Security Guarantee Card -->
+        <div class="security-guarantee-card">
+          <div class="guarantee-icon">🛡️</div>
+          <div>
+            <h4 class="guarantee-title">Zero-Trust Tenant Boundary</h4>
+            <p class="guarantee-text">PostgreSQL RLS enforcement, HMAC-SHA256 token delegation, and strictly gated provider telemetry.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Interactive Sign-In Card -->
+      <div class="login-card">
+        <div class="login-card-header">
+          <h2 class="card-headline">Sign In to UniERP</h2>
+          <p class="card-subheadline">Choose your sign-in method or launch an instant authorized persona session.</p>
+        </div>
+
+        <!-- Auth Tabs: Persona Quick-Switch vs Credentials vs Enterprise SSO -->
+        <div class="auth-tabs" role="tablist">
+          <button class="auth-tab active" data-tab="persona" role="tab" aria-selected="true">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+            <span>1-Click Persona</span>
+          </button>
+          <button class="auth-tab" data-tab="credentials" role="tab" aria-selected="false">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <span>Credentials</span>
+          </button>
+          <button class="auth-tab" data-tab="sso" role="tab" aria-selected="false">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="2" y1="12" x2="22" y2="12"></line>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+            </svg>
+            <span>Enterprise SSO</span>
+          </button>
+        </div>
+
+        <!-- TAB 1: 1-Click Persona Quick Sign-In -->
+        <div class="auth-tab-pane active" id="panePersona">
+          <div class="persona-selection-grid">
+
+            <!-- Persona 1: Public Guest -->
+            <div class="persona-card" data-role="guest">
+              <div class="persona-card-top">
+                <div class="persona-avatar avatar-guest">G</div>
+                <div class="persona-info">
+                  <div class="persona-name">Public Guest</div>
+                  <div class="persona-realm">visitor.unierp.internal</div>
+                </div>
+                <span class="persona-badge badge-guest">Public</span>
+              </div>
+              <p class="persona-detail">Zero credentials needed. Open access to Storefronts, Marketing, Catalog, and Developer Docs.</p>
+              <button class="btn-persona-select" data-role="guest">
+                <span>Launch Guest Mode</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              </button>
+            </div>
+
+            <!-- Persona 2: Tenant Staff (Finance Analyst) -->
+            <div class="persona-card" data-role="customer_employee">
+              <div class="persona-card-top">
+                <div class="persona-avatar avatar-staff">S</div>
+                <div class="persona-info">
+                  <div class="persona-name">Sarah Chen</div>
+                  <div class="persona-realm">Acme Global Ltd (Tenant #104)</div>
+                </div>
+                <span class="persona-badge badge-staff">Staff</span>
+              </div>
+              <p class="persona-detail">Financial analyst role. Seamless access to Tenant ERP (45 Modules), Mobile, and Desktop apps.</p>
+              <button class="btn-persona-select" data-role="customer_employee">
+                <span>Sign In as Staff</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              </button>
+            </div>
+
+            <!-- Persona 3: Tenant Administrator -->
+            <div class="persona-card" data-role="tenant_admin">
+              <div class="persona-card-top">
+                <div class="persona-avatar avatar-admin">A</div>
+                <div class="persona-info">
+                  <div class="persona-name">Alex Rivera</div>
+                  <div class="persona-realm">Acme Global Ltd (Tenant #104)</div>
+                </div>
+                <span class="persona-badge badge-admin">Tenant Admin</span>
+              </div>
+              <p class="persona-detail">Full organization admin. Access to Tenant ERP, Web Studio Visual Builder, Admin Console &amp; Apps.</p>
+              <button class="btn-persona-select" data-role="tenant_admin">
+                <span>Sign In as Admin</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              </button>
+            </div>
+
+            <!-- Persona 4: UniERP Core Team / SuperAdmin -->
+            <div class="persona-card card-team" data-role="unierp_team">
+              <div class="persona-card-top">
+                <div class="persona-avatar avatar-team">K</div>
+                <div class="persona-info">
+                  <div class="persona-name">Kannan</div>
+                  <div class="persona-realm">UniERP Provider Realm</div>
+                </div>
+                <span class="persona-badge badge-team">UniERP Core</span>
+              </div>
+              <p class="persona-detail">SuperAdmin &amp; Platform Engineer. Full access to all 10 platforms including Provider Admin OS (P2).</p>
+              <button class="btn-persona-select" data-role="unierp_team">
+                <span>Sign In as SuperAdmin</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              </button>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- TAB 2: Credential-Based Sign-In Form -->
+        <div class="auth-tab-pane" id="paneCredentials">
+          <form class="login-form" id="loginForm">
+            
+            <!-- Email Input with Live Tenant Realm Detection -->
+            <div class="form-group">
+              <label for="inputEmail" class="form-label">Work Email Address</label>
+              <div class="input-with-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="input-icon">
+                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                  <polyline points="22,6 12,13 2,6"></polyline>
+                </svg>
+                <input type="email" id="inputEmail" class="form-input" placeholder="name@organization.com" required autocomplete="username">
+              </div>
+              <!-- Live Tenant Realm Indicator -->
+              <div class="realm-indicator" id="realmIndicator" style="display: none;">
+                <span class="realm-dot"></span>
+                <span class="realm-text" id="realmText">Detected Tenant Realm: <strong>Acme Global Ltd</strong></span>
+              </div>
+            </div>
+
+            <!-- Password Input -->
+            <div class="form-group">
+              <div class="form-label-row">
+                <label for="inputPassword" class="form-label">Password</label>
+                <a href="#" class="forgot-link" id="btnDemoFill">Autofill Demo Password</a>
+              </div>
+              <div class="input-with-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="input-icon">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <input type="password" id="inputPassword" class="form-input" placeholder="••••••••••••" required autocomplete="current-password">
+                <button type="button" class="btn-toggle-pw" id="btnTogglePw" title="Show / Hide Password">
+                  👁️
+                </button>
+              </div>
+            </div>
+
+            <!-- Target Platform Jump (Optional) -->
+            <div class="form-group">
+              <label for="selectTargetPlatform" class="form-label">Destination Platform on Sign-In</label>
+              <select id="selectTargetPlatform" class="form-select">
+                <option value="wizard">🔮 UniERP Master Platform Hub (Default)</option>
+                <option value="p3">🏢 Tenant Apps / ERP (:4003)</option>
+                <option value="p5">🎨 Web Studio Visual Builder (:4005)</option>
+                <option value="p6">⚙️ Tenant Admin Console (:4006)</option>
+                <option value="p7">🛍️ Marketplace (:4007)</option>
+                <option value="p8">💻 Developer Platform (:4008)</option>
+                <option value="p9">📱 Mobile Client (:4009)</option>
+                <option value="p10">🖥️ Desktop App Preview (:4010)</option>
+                <option value="p2">🔒 Provider Admin OS (:4002 - UniERP Team Only)</option>
+              </select>
+            </div>
+
+            <!-- Remember Me & Security Notice -->
+            <div class="form-options-row">
+              <label class="checkbox-label">
+                <input type="checkbox" id="checkRemember" checked>
+                <span>Remember session for 24 hours</span>
+              </label>
+              <span class="tls-badge">🔒 TLS 1.3 + RLS</span>
+            </div>
+
+            <!-- Submit Button -->
+            <button type="submit" class="btn-submit-auth" id="btnSubmitAuth">
+              <span id="btnSubmitText">Authenticate &amp; Launch Gateway</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+                <polyline points="12 5 19 12 12 19"></polyline>
+              </svg>
+            </button>
+          </form>
+        </div>
+
+        <!-- TAB 3: Enterprise SSO / Federated SAML / OIDC -->
+        <div class="auth-tab-pane" id="paneSSO">
+          <div class="sso-federated-box">
+            <p class="sso-desc">Authenticate using your corporate Single Sign-On identity provider (Okta, Azure Active Directory / Entra, Google Workspace, or Ping Identity).</p>
+
+            <div class="sso-providers-list">
+              <button class="btn-sso-provider" data-sso="okta">
+                <span class="sso-provider-icon">🔷</span>
+                <span>Sign in with Corporate Okta SSO</span>
+              </button>
+              <button class="btn-sso-provider" data-sso="azure">
+                <span class="sso-provider-icon">🟦</span>
+                <span>Sign in with Microsoft Entra ID</span>
+              </button>
+              <button class="btn-sso-provider" data-sso="google">
+                <span class="sso-provider-icon">🌐</span>
+                <span>Sign in with Google Workspace</span>
+              </button>
+            </div>
+
+            <div class="sso-help-text">
+              Looking to configure SAML 2.0 or OIDC for your custom tenant domain? Manage SAML connectors in <a href="http://localhost:4006" target="_blank">Tenant Admin Console (:4006)</a>.
+            </div>
+          </div>
+        </div>
+
+        <!-- Card Footer -->
+        <div class="login-card-footer">
+          <span class="token-info">Master SSO Token: <code id="tokenStatus">HMAC-SHA256 Active</code></span>
+          <span class="help-links">
+            <a href="http://localhost:4008" target="_blank">API Docs</a> &middot;
+            <a href="http://localhost:6006" target="_blank">Design System</a>
+          </span>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- SSO Toast Notification -->
+  <div class="sso-toast" id="loginToast">
+    <div class="toast-icon" id="toastIcon">✨</div>
+    <div class="toast-content">
+      <div class="toast-title" id="toastTitle">Session Established</div>
+      <div class="toast-msg" id="toastMsg">Issuing delegation token and routing...</div>
+    </div>
+  </div>
+
+  <script src="login.js"></script>
+</body>
+</html>

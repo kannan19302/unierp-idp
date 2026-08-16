@@ -45,6 +45,7 @@ import { deprecationMiddleware } from "./common/versioning/deprecation.middlewar
 validateEnv();
 
 import { NestFactory } from "@nestjs/core";
+import { NestExpressApplication } from "@nestjs/platform-express";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
@@ -70,7 +71,10 @@ async function bootstrap() {
   const logger = new AppLogger();
   logger.setContext("Bootstrap");
 
-  const app = await NestFactory.create(AppModule, { logger });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger });
+
+  // Serve the Global Platform Wizard and other static assets
+  app.useStaticAssets(path.join(__dirname, "public"));
 
   app.use(
     json({

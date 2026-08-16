@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-density="comfortable">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UniERP Platform Wizard — Master SSO &amp; Navigation Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="wizard.css">
+</head>
+<body>
+
+  <!-- Background decorative ambient lighting -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+  <div class="ambient-glow glow-3"></div>
+
+  <!-- Top App Navigation & Command Bar -->
+  <header class="app-header">
+    <div class="nav-brand">
+      <a href="/" class="brand-link">
+        <div class="logo-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">UniERP <span class="badge-portal">Master SSO Portal</span></span>
+          <span class="brand-subtitle">10 Platforms · Unified Enterprise OS</span>
+        </div>
+      </a>
+    </div>
+
+    <!-- Center Persona & Role Quick Switcher -->
+    <div class="persona-selector-container">
+      <span class="persona-label">Active Role:</span>
+      <div class="persona-pills" id="personaPills">
+        <button class="pill active" data-role="guest" title="Public Visitor (No login required for open platforms)">
+          <span class="pill-dot guest"></span> Guest
+        </button>
+        <button class="pill" data-role="customer_employee" title="Tenant Staff (Sarah Chen - Finance Analyst)">
+          <span class="pill-dot staff"></span> Tenant Staff
+        </button>
+        <button class="pill" data-role="tenant_admin" title="Tenant Administrator (Alex Rivera - IT Director)">
+          <span class="pill-dot admin"></span> Tenant Admin
+        </button>
+        <button class="pill" data-role="unierp_team" title="UniERP Core Platform Lead & SuperAdmin (Kannan)">
+          <span class="pill-dot team"></span> UniERP Team
+        </button>
+      </div>
+    </div>
+
+    <!-- Right Controls: Command Palette, Live Health, Theme, Density, User Profile -->
+    <div class="nav-actions">
+      <!-- Command Palette Trigger Button -->
+      <button class="btn-cmd-palette" id="btnCmdPalette" title="Open Command Palette (Ctrl+K / ⌘K)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <span>Search</span>
+        <span class="kbd-badge">⌘K</span>
+      </button>
+
+      <!-- Live Health Badge -->
+      <div class="live-health-summary" id="liveHealthBadge" title="Live Cluster Status">
+        <span class="pulse-indicator"></span>
+        <span class="health-text" id="healthText">Probing cluster...</span>
+      </div>
+
+      <!-- Theme Switcher Dropdown -->
+      <div class="theme-picker-container">
+        <label for="themeSelect" class="sr-only">Theme</label>
+        <select id="themeSelect" class="theme-select" title="Switch Design System Theme">
+          <option value="dark">🌙 Dark Theme</option>
+          <option value="light">☀️ Light Theme</option>
+          <option value="enterprise">🏢 Enterprise Theme</option>
+          <option value="modern">✨ Modern Theme</option>
+          <option value="minimal">⚪ Minimal Theme</option>
+          <option value="classic">🏛️ Classic Theme</option>
+          <option value="high-contrast">👁️ High Contrast (AAA)</option>
+        </select>
+      </div>
+
+      <!-- Density Toggle -->
+      <button class="btn-density-toggle" id="btnDensityToggle" title="Toggle Density Scale (Comfortable / Compact)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+        <span id="densityLabel">Compact</span>
+      </button>
+
+      <!-- Refresh Trigger -->
+      <button class="btn-refresh" id="btnRefresh" title="Refresh Live Telemetry">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+        </svg>
+      </button>
+
+      <!-- User Profile Badge & Global Login Portal Link -->
+      <div class="user-profile-badge" id="userProfileBadge">
+        <div class="avatar" id="userAvatar">G</div>
+        <div class="user-meta">
+          <span class="user-name" id="userName">Public Guest</span>
+          <span class="user-role" id="userRoleBadge">Guest Visitor</span>
+        </div>
+      </div>
+
+      <a href="/login" class="btn-login-cta" id="btnGlobalLogin" title="Open UniERP Global Sign-In Gateway">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+          <polyline points="10 17 15 12 10 7"></polyline>
+          <line x1="15" y1="12" x2="3" y2="12"></line>
+        </svg>
+        <span>Global Sign-In</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- Hero Header / Context Banner -->
+  <section class="hero-banner">
+    <div class="hero-content">
+      <div class="hero-badge" id="heroBadge">
+        <span class="hero-badge-dot"></span>
+        <span id="heroBadgeText">Public Access Mode — Zero Login Required for Public Platforms</span>
+      </div>
+      <h1 class="hero-title" id="heroTitle">Global Platform Switcher &amp; Gateway</h1>
+      <p class="hero-description" id="heroDesc">
+        Browse and launch UniERP presentation platforms. Public services are open to everyone without credentials, while organization and admin suites support seamless Single Sign-On.
+      </p>
+    </div>
+
+    <!-- Quick Stats Ribbon -->
+    <div class="stats-ribbon">
+      <div class="stat-card">
+        <span class="stat-value" id="statPlatformsCount">4 / 10</span>
+        <span class="stat-label">Accessible Platforms</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value text-emerald" id="statOnlineCount">--</span>
+        <span class="stat-label">Services Online</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value text-purple" id="statAvgLatency">-- ms</span>
+        <span class="stat-label">Avg Cluster Latency</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value text-cyan">HMAC-SHA256</span>
+        <span class="stat-label">Master SSO Delegation</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main Content Body -->
+  <main class="main-container">
+
+    <!-- Developer / UniERP Team Control Deck (Visible when UniERP Team is active) -->
+    <section class="dev-control-deck" id="devControlDeck" style="display: none;">
+      <div class="deck-header">
+        <div class="deck-title-group">
+          <div class="deck-icon">⚡</div>
+          <div>
+            <h3 class="deck-title">UniERP Core Team Master Deck</h3>
+            <p class="deck-sub">Direct container orchestration, Docker telemetry, and automated End-to-End navigation verification.</p>
+          </div>
+        </div>
+        <div class="deck-actions">
+          <button class="btn btn-primary" id="btnRunE2E">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            Run E2E Navigation Tests
+          </button>
+          <a href="http://localhost:3001/api/docs" target="_blank" class="btn btn-secondary">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+            OpenAPI Docs (:3001)
+          </a>
+          <a href="http://localhost:6006" target="_blank" class="btn btn-secondary">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+            </svg>
+            Storybook (:6006)
+          </a>
+        </div>
+      </div>
+
+      <!-- Test Output Console Terminal -->
+      <div class="test-terminal" id="testTerminal" style="display: none;">
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <span class="dot red"></span>
+            <span class="dot yellow"></span>
+            <span class="dot green"></span>
+          </div>
+          <span class="terminal-title">Automated E2E Platform Navigation Test Runner</span>
+          <button class="terminal-close" id="btnCloseTerminal">✕</button>
+        </div>
+        <pre class="terminal-body" id="terminalOutput">Executing verification tests...</pre>
+      </div>
+    </section>
+
+    <!-- Platform Section Toolbar & View Switcher -->
+    <section class="platforms-section">
+      <div class="section-header-toolbar">
+        <div>
+          <h2 class="section-title">Authorized Platform Grid</h2>
+          <p class="section-desc" id="sectionRoleDesc">Displaying platforms accessible under your current permissions.</p>
+        </div>
+
+        <div class="controls-cluster">
+          <!-- Search Filter Input -->
+          <div class="search-box">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="platformSearchInput" placeholder="Filter platforms...">
+          </div>
+
+          <!-- Category Filter Tabs -->
+          <div class="filter-controls">
+            <button class="filter-btn active" data-filter="all">All Available</button>
+            <button class="filter-btn" data-filter="business">Business Core</button>
+            <button class="filter-btn" data-filter="public">Public</button>
+            <button class="filter-btn" data-filter="L4 Presentation">L4 Presentation</button>
+            <button class="filter-btn" data-filter="L5 Client">L5 Clients</button>
+          </div>
+
+          <!-- View Mode Selector (Grid, Table, Topology) -->
+          <div class="view-mode-selector">
+            <button class="btn-view-mode active" data-view="grid" title="Cards Grid View">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+            </button>
+            <button class="btn-view-mode" data-view="table" title="Dense Data Table View">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="8" y1="6" x2="21" y2="6"></line>
+                <line x1="8" y1="12" x2="21" y2="12"></line>
+                <line x1="8" y1="18" x2="21" y2="18"></line>
+                <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                <line x1="3" y1="18" x2="3.01" y2="18"></line>
+              </svg>
+            </button>
+            <button class="btn-view-mode" data-view="topology" title="Architecture Topology Layer Map">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                <polyline points="2 17 12 22 22 17"></polyline>
+                <polyline points="2 12 12 17 22 12"></polyline>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Platform Catalog Container (Dynamic: Grid / Table / Topology) -->
+      <div id="catalogContainer">
+        <!-- Injected via JavaScript -->
+        <div class="platforms-grid" id="platformsGrid">
+          <div class="loading-placeholder">Loading UniERP platforms...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cluster Backend & Infrastructure Health Matrix -->
+    <section class="infra-section">
+      <div class="section-header-toolbar">
+        <div>
+          <h2 class="section-title">Core Services &amp; Infrastructure Matrix</h2>
+          <p class="section-desc">Real-time status of backend services, Identity Provider (IdP), and shared datastores.</p>
+        </div>
+      </div>
+
+      <div class="infra-grid" id="infraGrid">
+        <!-- Injected via JavaScript -->
+      </div>
+    </section>
+
+    <!-- SSO & Access Model Explainer -->
+    <section class="explainer-section">
+      <div class="explainer-card">
+        <div class="explainer-icon">🌐</div>
+        <h4 class="explainer-title">Public Open Access</h4>
+        <p class="explainer-text">
+          Platforms like <strong>Marketing Site</strong>, <strong>Tenant Websites</strong>, <strong>Marketplace Catalog</strong>, and <strong>Developer API Docs</strong> require zero login. Guests can browse freely.
+        </p>
+      </div>
+
+      <div class="explainer-card">
+        <div class="explainer-icon">🔑</div>
+        <h4 class="explainer-title">Master Single Sign-On (SSO)</h4>
+        <p class="explainer-text">
+          Signing into the Platform Wizard establishes a verified session. Clicking <strong>1-Click SSO Launch</strong> logs you directly into ERP, Web Studio, and Tenant Admin with zero re-authentication.
+        </p>
+      </div>
+
+      <div class="explainer-card">
+        <div class="explainer-icon">🛡️</div>
+        <h4 class="explainer-title">Role-Gated Isolation</h4>
+        <p class="explainer-text">
+          <strong>Provider Admin OS (P2)</strong> is strictly restricted to the UniERP internal team. Customers and tenant users cannot view or access internal management consoles.
+        </p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Interactive Command Palette Modal (Ctrl+K) -->
+  <div class="command-palette-backdrop" id="commandPaletteBackdrop">
+    <div class="command-palette-modal">
+      <div class="palette-input-wrapper">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" class="palette-search-input" id="paletteSearchInput" placeholder="Type a platform name, port, persona, or action..." autocomplete="off">
+        <span class="kbd-badge">ESC</span>
+      </div>
+
+      <div class="palette-results-list" id="paletteResultsList">
+        <!-- Injected via JavaScript -->
+      </div>
+
+      <div class="palette-footer">
+        <span>Use <span class="kbd-badge">↑</span> <span class="kbd-badge">↓</span> to navigate, <span class="kbd-badge">ENTER</span> to select</span>
+        <span>UniERP Master Switcher</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SSO Toast Notification -->
+  <div class="sso-toast" id="ssoToast">
+    <div class="toast-icon">✨</div>
+    <div class="toast-content">
+      <div class="toast-title" id="toastTitle">SSO Delegation Issued</div>
+      <div class="toast-msg" id="toastMsg">Launching platform with seamless authentication...</div>
+    </div>
+  </div>
+
+  <script src="wizard.js"></script>
+</body>
+</html>
