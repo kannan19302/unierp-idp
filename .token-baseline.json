@@ -1,0 +1,9 @@
+{
+  "_comment": "Pre-existing token violations, recorded so the gate can be adopted without a mass rewrite. The gate fails on any NEW violation and on any file here that gets worse. These numbers may only go down. Delete an entry when its file reaches zero.",
+  "_generated": "2026-08-21",
+  "_total": 35,
+  "files": {
+    "src/modules/oidc/controllers/login.controller.ts": 21,
+    "src/modules/oidc/controllers/session.controller.ts": 14
+  }
+}
