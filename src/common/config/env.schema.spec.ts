@@ -28,7 +28,9 @@ describe("checkEnv (Track G.6 boot validation)", () => {
     const { env, errors } = checkEnv(validDev);
     expect(errors).toEqual([]);
     expect(env).not.toBeNull();
-    expect(env?.API_PORT).toBe(4000);
+    // 3005, not 4000. This service is the IdP; 4000 is the platform wizard and
+    // 3001 is the API, both of which this default previously collided with.
+    expect(env?.API_PORT).toBe(3005);
     expect(env?.REDIS_URL).toBe("redis://localhost:6379");
     expect(env?.LOG_LEVEL).toBe("info");
   });

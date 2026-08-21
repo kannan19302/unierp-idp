@@ -8,6 +8,8 @@ import { Reflector } from "@nestjs/core";
 import { idpPrisma, prisma, runWithTenantSession } from "@kannan19302/database";
 import { hasPermission } from "@kannan19302/auth";
 import { PERMISSIONS_KEY } from "../decorators/permissions.decorator";
+import { parseRolePermissions } from "../permissions/parse-role-permissions";
+import { emitAuthAudit } from "../audit/emit-auth-audit";
 
 @Injectable()
 export class RbacGuard implements CanActivate {
@@ -48,14 +50,7 @@ export class RbacGuard implements CanActivate {
     // Extract and parse permission strings from roles
     const userPermissions: string[] = [];
     for (const ur of userRoles) {
-      try {
-        const perms = JSON.parse(ur.role.permissions as string);
-        if (Array.isArray(perms)) {
-          userPermissions.push(...perms);
-        }
-      } catch {
-        // Skip malformed role permissions
-      }
+      userPermissions.push(...parseRolePermissions(ur.role.permissions));
     }
 
     // Verify if the user possesses the permissions required by the endpoint
@@ -64,6 +59,13 @@ export class RbacGuard implements CanActivate {
     );
 
     if (!isAuthorized) {
+      await emitAuthAudit({
+        tenantId: user.tenantId,
+        userId: user.userId,
+        action: "AUTH_PERMISSION_DENIED",
+        entityType: "Permission",
+        entityId: requiredPermissions.join(","),
+      });
       throw new ForbiddenException(
         "You do not have the required permissions to access this resource",
       );

@@ -48,6 +48,13 @@ vi.mock("@kannan19302/database", () => {
       tenantSubscription: {
         create: vi.fn(),
       },
+      // getRecommendedInstallSlugs() seeds InstalledApp rows for the
+      // registering tenant's recommended module set — also written through
+      // the OUTER `prisma` client, same reasoning as saaSPlan/tenantSubscription
+      // above.
+      installedApp: {
+        create: vi.fn().mockResolvedValue({}),
+      },
       $transaction: vi.fn((cb) =>
         cb({
           $executeRaw: vi.fn().mockResolvedValue(1),

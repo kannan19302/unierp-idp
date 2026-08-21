@@ -10,6 +10,8 @@ import { SsoService } from "./sso.service";
 import { ProvisioningService } from "./provisioning.service";
 import { OnboardingController } from "./onboarding.controller";
 import { OnboardingService } from "./onboarding.service";
+import { LoginThrottleService } from "./login-throttle.service";
+import { OtpStore } from "./otp.store";
 
 import { PlatformCredentialsModule } from "../../common/platform-credentials/platform-credentials.module";
 
@@ -24,6 +26,8 @@ import { PlatformCredentialsModule } from "../../common/platform-credentials/pla
   ],
   providers: [
     AuthService,
+    LoginThrottleService,
+    OtpStore,
     AuthDeepService,
     OAuthService,
     SsoService,
@@ -32,6 +36,8 @@ import { PlatformCredentialsModule } from "../../common/platform-credentials/pla
   ],
   exports: [
     AuthService,
+    LoginThrottleService,
+    OtpStore,
     AuthDeepService,
     OAuthService,
     SsoService,

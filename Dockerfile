@@ -61,14 +61,102 @@ ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
 COPY tsconfig.json nest-cli.json ./
 COPY src ./src
 
+# ── local package overlay (DEV ONLY) ────────────────────────────────────────
+#
+# Why this stage exists.
+#
+# The registry install above is what makes the repository split real, and it
+# stays exactly as it was for the production path below. But it also means the
+# image gets whatever `@kannan19302/*` was last PUBLISHED — and the W1/W2 work
+# added ten Prisma models (OAuthClient, AuthorizationCode, RefreshGrant,
+# ClientConsent, OidcSigningKey, LoginAttemptCounter, Platform, PlatformGrant,
+# AgentDefinition, AgentDelegation) that exist only in the local `data`
+# package. Against published database@1.0.14 this service fails to compile
+# with 35 "Property does not exist on type PrismaClient" errors, so the
+# container could never run the very features it was built for.
+#
+# This is the "wire local overrides so shared/database resolve from disk in
+# dev" item from the programme's Local development section. It applies to the
+# DEV target only: `prod-builder` below still builds against the registry, so
+# the split property is preserved where it matters and publishing remains the
+# real release path.
+#
+# The sources arrive through a named build context (`localpkgs`, wired to the
+# repo root in infra/docker-compose.platform.yml) rather than by moving this
+# Dockerfile's own context, so `docker build -t unierp-idp .` from this
+# directory keeps working — the default target is `runner`, which never
+# touches this stage.
+#
+# Node modules and prebuilt output are deliberately NOT copied: the host's
+# generated Prisma client carries a query engine compiled for the host OS.
+# Everything is generated and compiled here instead, on this image's platform,
+# which is the same reason the published package ships prisma/ but not the
+# generated client (see data/scripts/postinstall.mjs).
+FROM builder AS localdeps
+
+# tsconfig.base.json is required, not optional: both packages' tsconfig.json
+# does `extends: ./tsconfig.base.json`, and a missing extends target does not
+# fail loudly — tsc silently falls back to its ES3/ES5 defaults and then
+# reports dozens of "Property 'padStart' does not exist on type 'string'"
+# errors that look like source bugs rather than a missing file.
+COPY --from=localpkgs shared/package.json shared/tsconfig.json shared/tsconfig.base.json /tmp/shared/
+COPY --from=localpkgs shared/src /tmp/shared/src
+RUN cd /tmp/shared \
+ && npm install --no-audit --no-fund \
+ && npm run build
+
+COPY --from=localpkgs data/package.json data/tsconfig.json data/tsconfig.base.json data/prisma.config.ts /tmp/data/
+COPY --from=localpkgs data/prisma /tmp/data/prisma
+COPY --from=localpkgs data/src /tmp/data/src
+COPY --from=localpkgs data/scripts /tmp/data/scripts
+# src/idp-client is generated output that may have been committed/left behind
+# with host-native engines; drop it so `prisma generate` writes this platform's.
+RUN rm -rf /tmp/data/src/idp-client /tmp/data/dist \
+ && cd /tmp/data \
+ # postinstall runs `prisma generate` for BOTH schemas (main + idp), then the
+ # build's copy-prisma-clients.mjs places src/idp-client alongside dist/, which
+ # is what dist/index.js requires at runtime.
+ && npm install --no-audit --no-fund \
+ && npm run build
+
+# Overlay: replace the published copies with the freshly built local ones.
+# Their nested node_modules travel with them, so @prisma/client and the
+# generated .prisma/client engines resolve from inside each package.
+RUN rm -rf node_modules/@kannan19302/shared node_modules/@kannan19302/database \
+ && mkdir -p node_modules/@kannan19302 \
+ && cp -r /tmp/shared node_modules/@kannan19302/shared \
+ && cp -r /tmp/data node_modules/@kannan19302/database \
+ && rm -rf /tmp/shared /tmp/data
+
 # ── dev ─────────────────────────────────────────────────────────────────────
-FROM builder AS dev
+# Build dist/ at IMAGE BUILD TIME and run `node dist/main.js`, exactly as
+# api/Dockerfile does and for exactly the same reason.
+#
+# `nest start --watch` is tsc in watch mode over the whole project. Under the
+# shared *watch-env (NODE_OPTIONS=--max-old-space-size=8192) V8 is told it has
+# an 8GB heap, so it does not collect until it reaches the cgroup wall — this
+# container sat pinned at its mem_limit at single-digit CPU and NEVER finished
+# the first compile, so nothing ever answered on :3005. Raising the limit only
+# moved the wall (2g -> pinned at 2g, 4g -> pinned at 3.6g).
+#
+# With `nest build` the compile happens once, here, and exits; the container
+# then runs a cheap, stable ~700MB process. That also matters for the platform
+# as a whole: WSL2 has a 10GB budget shared across every service, and an idle
+# idp holding 4GB of it is 4GB the twelve frontends cannot have.
+#
+# Trade-off, same as api: a src/ change needs `docker compose build idp` and a
+# restart to take effect. The mounted src/ volume still reflects the working
+# tree for inspection, but it is no longer what the process runs.
+FROM localdeps AS dev
 ENV NODE_ENV=development
+RUN node --max-old-space-size=8192 ./node_modules/@nestjs/cli/bin/nest.js build
 EXPOSE 3005
-CMD ["npx", "nest", "start", "--watch"]
+CMD ["node", "dist/main.js"]
 
 # ── build ───────────────────────────────────────────────────────────────────
-FROM dev AS prod-builder
+# FROM builder, not dev: the production artifact is built against the registry,
+# so a published release never silently depends on a developer's working tree.
+FROM builder AS prod-builder
 RUN npm run build
 
 # ── runtime ─────────────────────────────────────────────────────────────────

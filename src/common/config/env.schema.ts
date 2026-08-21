@@ -49,7 +49,9 @@ export const envSchema = z.object({
     .startsWith("redis", "must be a redis:// or rediss:// URL")
     .default("redis://localhost:6379")
     .describe("Redis connection string (BullMQ queues, caching)"),
-  API_PORT: port.default(4000).describe("Port the NestJS API listens on"),
+  // 4000 is the platform wizard. This service listens on 3005 (see compose and
+  // main.ts); a default that lands on another service is worse than no default.
+  API_PORT: port.default(3005).describe("Port this IdP service listens on"),
   APP_URL: z
     .string()
     .url()

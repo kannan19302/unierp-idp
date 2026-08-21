@@ -41,6 +41,20 @@ export function csrfMiddleware(
     return next();
   }
 
+  // Skip CSRF for the OAuth 2.0 / OIDC protocol endpoints.
+  //
+  // CSRF protects against a request the browser makes with ambient authority —
+  // a cookie it attaches automatically. The token endpoint has no ambient
+  // authority to abuse: the caller must present an authorization code AND the
+  // PKCE verifier that code was bound to (or a refresh token), none of which a
+  // cross-site attacker can obtain or replay. It is also called server-to-server
+  // and by native clients that have no cookie jar and no way to read a CSRF
+  // cookie, so the check cannot be satisfied by a conformant OAuth client at
+  // all — it would simply make the flow impossible rather than safer.
+  if (path.startsWith("/oidc/")) {
+    return next();
+  }
+
   // Skip CSRF for the E-Commerce Storefront's public/unauthenticated routes
   // (apps/api/src/modules/ecommerce/ecommerce-public.controller.ts, mounted at
   // /store/:tenantSlug/*). These serve anonymous external customers who never

@@ -10,6 +10,7 @@ import { CONTROL_PLANE_NAMESPACES, hasPermission } from "@kannan19302/shared";
 import { idpPrisma, prisma, runWithTenantSession } from "@kannan19302/database";
 import { PERMISSIONS_KEY } from "../decorators/permissions.decorator";
 import { SKIP_TENANT_SCOPE_KEY } from "../decorators/skip-tenant-scope.decorator";
+import { parseRolePermissions } from "../permissions/parse-role-permissions";
 
 /**
  * The control-plane boundary, enforced in code rather than implied by a string.
@@ -121,12 +122,7 @@ export class ControlPlaneGuard implements CanActivate {
 
     const permissions: string[] = [];
     for (const ur of userRoles) {
-      try {
-        const parsed = JSON.parse(ur.role.permissions as string);
-        if (Array.isArray(parsed)) permissions.push(...parsed);
-      } catch {
-        // A malformed role grants nothing. Fail closed.
-      }
+      permissions.push(...parseRolePermissions(ur.role.permissions));
     }
     return permissions;
   }

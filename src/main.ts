@@ -73,9 +73,6 @@ async function bootstrap() {
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger });
 
-  // Serve the Global Platform Wizard and other static assets
-  app.useStaticAssets(path.join(__dirname, "public"));
-
   app.use(
     json({
       limit: "50mb",
@@ -96,6 +93,11 @@ async function bootstrap() {
   app.use(requestLoggerMiddleware);
   app.use(metricsMiddleware);
 
+  // Every first-party platform origin (ports 4000-4010, per
+  // infra/docker-compose.platform.yml's port map). Used by BOTH the CSP
+  // form-action allowlist below and the CORS allowlist further down.
+  const platformOrigins = Array.from({ length: 11 }, (_, i) => `http://localhost:${4000 + i}`);
+
   // Security
   app.use(
     helmet({
@@ -108,7 +110,22 @@ async function bootstrap() {
           fontSrc: ["'self'"],
           connectSrc: ["'self'", "ws:", "wss:"],
           frameAncestors: ["'none'"],
-          formAction: ["'self'"],
+          // 'self' ALONE BREAKS SSO. Chrome enforces form-action against every
+          // hop of the redirect chain a form submission triggers, not just the
+          // form's immediate action. The hosted login form posts to
+          // /oidc/login (same origin, fine), which 302s to /oidc/authorize
+          // (same origin, fine), which 302s to the relying party's
+          // redirect_uri — http://localhost:4000/auth/callback and friends,
+          // a DIFFERENT origin. With 'self' alone the browser aborts that last
+          // navigation and silently leaves the user sitting on the login page,
+          // while the server log shows POST /oidc/login 302 and authorize 302
+          // and looks perfectly healthy. Nothing in the UI says CSP.
+          //
+          // Same allowlist as CORS below, and the same caveat: the correct
+          // source of truth is the redirect_uri origins registered on each
+          // OAuthClient (data/prisma/seed-oidc-clients.ts), which W6 should
+          // wire this up to read instead of a static port range.
+          formAction: ["'self'", ...platformOrigins],
           baseUri: ["'none'"],
           upgradeInsecureRequests: [],
         },
@@ -118,12 +135,28 @@ async function bootstrap() {
     }),
   );
   app.use(cookieParser());
+  // idp is the OIDC provider for all ten platforms plus the wizard, not a
+  // backend for one Next.js app — a single-origin CORS allowlist (the
+  // original NEXTAUTH_URL/APP_URL pair) meant every platform except whichever
+  // one happened to be configured got a browser-level CORS failure on
+  // /oidc/token, /oidc/userinfo and /api/v1/auth/platforms, indistinguishable
+  // from the network being down. The allowed set is every first-party
+  // platform origin (ports 4000-4010, per infra/docker-compose.platform.yml's
+  // port map) plus whatever NEXTAUTH_URL/APP_URL/CORS_ORIGINS add for
+  // non-standard deployments.
+  //
+  // This is a dev-appropriate allowlist, not the long-term design: the
+  // correct source of truth is the redirect_uri origins already registered on
+  // each OAuthClient (data/prisma/seed-oidc-clients.ts), which W6 should wire
+  // this up to read instead of a static port range.
   const allowedOrigins = [
-    process.env.NEXTAUTH_URL ?? "http://localhost:3000",
+    ...platformOrigins,
+    process.env.NEXTAUTH_URL,
     process.env.APP_URL,
+    ...(process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()) ?? []),
   ].filter(Boolean) as string[];
   app.enableCors({
-    origin: allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins,
+    origin: allowedOrigins,
     credentials: true,
   });
 
@@ -138,8 +171,33 @@ async function bootstrap() {
   app.use(deprecationMiddleware());
 
   // Global prefix for all API routes (metrics and swagger excluded)
+  // `.well-known/openid-configuration` and the JWKS must sit at the issuer
+  // root: RFC 8414 has clients build that URL from the issuer themselves, so a
+  // prefixed copy is one no standard client will ever look for.
+  // The OIDC endpoints sit at the ISSUER ROOT, not under /api/v1.
+  //
+  // Discovery publishes absolute URLs built from the issuer
+  // (`${issuer}/oidc/token` and so on), and clients use exactly those. Leaving
+  // these under the API prefix makes the discovery document advertise paths
+  // that 404 — the endpoints exist, just nowhere a conformant client looks.
+  // Every route added to the OIDC module must be listed here.
   app.setGlobalPrefix("api/v1", {
-    exclude: ["metrics", "swagger", "swagger-json"],
+    exclude: [
+      "metrics",
+      "swagger",
+      "swagger-json",
+      ".well-known/openid-configuration",
+      "oidc/jwks.json",
+      "oidc/authorize",
+      "oidc/token",
+      "oidc/userinfo",
+      "oidc/revoke",
+      "oidc/introspect",
+      "oidc/end_session",
+      "oidc/login",
+      "oidc/login/mfa",
+      "oidc/consent",
+    ],
   });
 
   // OpenAPI documentation
@@ -159,10 +217,18 @@ async function bootstrap() {
   // uninstalled (kernel apps and unmapped routes pass through).
   app.use(entitlementMiddleware);
 
-  const port = process.env.API_PORT ?? 3001;
+  // This service is the IdP, not the API. Defaulting to 3001 collided with
+  // `api`, and env.schema.ts separately defaulted API_PORT to 4000, which
+  // collided with the platform wizard — only compose happened to be right.
+  // PORT is the service's own variable; API_PORT is kept as a fallback for
+  // existing deployments that set it.
+  const port = process.env.PORT ?? process.env.API_PORT ?? 3005;
   await app.listen(port, "0.0.0.0");
 
-  logger.log(`UniERP API running on http://localhost:${port}/api/v1`);
+  logger.log(`UniERP IdP running on http://localhost:${port}/api/v1`);
+  logger.log(
+    `OIDC discovery at http://localhost:${port}/.well-known/openid-configuration`,
+  );
   logger.log(`Swagger docs at http://localhost:${port}/swagger`);
 }
 

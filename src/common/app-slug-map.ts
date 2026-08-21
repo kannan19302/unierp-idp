@@ -99,3 +99,39 @@ export function getRecommendedInstallSlugs(
 // Re-exported so callers can depend on `app-slug-map` alone going forward.
 export { GATED_MODULES, GATED_SLUGS, moduleSlugForSegment, isUninstallable };
 export type { GatedModule };
+
+export interface AppCatalogEntry {
+  slug: string;
+  segments: string[];
+  kernel: boolean;
+  industryBundle?: boolean;
+}
+
+/**
+ * The canonical module/app catalog as plain JSON — the same GATED_MODULES /
+ * KERNEL_SLUGS / KNOWN_INDUSTRY_APP_SLUGS this file already re-exports, in
+ * the shape an HTTP endpoint returns. A pure function (no DB, no request
+ * context) so both `saas` (tenant-facing) and `saas-portal` (platform-
+ * operator-facing) controllers can serve it from one place instead of each
+ * re-deriving it — which is exactly the five-parallel-lists problem this
+ * catalog exists to close, one level down.
+ */
+export function buildAppCatalog(): { modules: AppCatalogEntry[] } {
+  const kernel: AppCatalogEntry[] = Array.from(KERNEL_SLUGS).map((slug) => ({
+    slug,
+    segments: [slug],
+    kernel: true,
+  }));
+  const core: AppCatalogEntry[] = GATED_MODULES.map((m) => ({
+    slug: m.slug,
+    segments: m.segments,
+    kernel: false,
+  }));
+  const industry: AppCatalogEntry[] = KNOWN_INDUSTRY_APP_SLUGS.map((slug) => ({
+    slug,
+    segments: [slug],
+    kernel: false,
+    industryBundle: true,
+  }));
+  return { modules: [...kernel, ...core, ...industry] };
+}

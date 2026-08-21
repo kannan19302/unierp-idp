@@ -42,6 +42,11 @@ import {
 } from "./auth-crypto";
 import { ProvisioningService } from "./provisioning.service";
 import { PlatformCredentialsService } from "../../common/platform-credentials/platform-credentials.service";
+import { parseRolePermissions } from "../../common/permissions/parse-role-permissions";
+import { LoginThrottleService } from "./login-throttle.service";
+import { OtpStore } from "./otp.store";
+import { getRecommendedInstallSlugs } from "../../common/app-slug-map";
+import { emitAuthAudit } from "../../common/audit/emit-auth-audit";
 
 /** Failed logins allowed before the account is temporarily locked. */
 const MAX_FAILED_ATTEMPTS = 5;
@@ -51,6 +56,18 @@ const LOCK_DURATION_MS = 15 * 60 * 1000;
 const MFA_CHALLENGE_TTL = "5m";
 /** How long a push-approval request stays pending before the login page falls back to a manual code. */
 const MFA_PUSH_TTL_MS = 2 * 60 * 1000;
+/**
+ * Concurrent-session cap. Not per-tenant/per-plan yet, for the same reason
+ * IDLE_TIMEOUT_MS in jwt-auth.guard.ts isn't — no security-policy tier exists
+ * on the plan model to key it off. The oldest active session is revoked to
+ * make room, rather than refusing the new login, since a locked-out user with
+ * a stale forgotten browser tab open is a worse failure mode than one extra
+ * device silently losing its session.
+ */
+const MAX_CONCURRENT_SESSIONS = parseInt(
+  process.env.MAX_CONCURRENT_SESSIONS || "5",
+  10,
+);
 
 // VAPID details are applied lazily per-send (see AuthService.configureWebPush)
 // rather than once at module load, so a key saved from the SaaS Portal
@@ -149,6 +166,10 @@ export class AuthService {
     private readonly eventEmitter?: EventEmitter2,
     @Optional()
     private readonly platformCredentialsService?: PlatformCredentialsService,
+    @Optional()
+    private readonly loginThrottle?: LoginThrottleService,
+    @Optional()
+    private readonly otpStore?: OtpStore,
   ) {}
 
   /**
@@ -443,6 +464,36 @@ export class AuthService {
           },
         );
 
+        await updateProgress(92, "Installing recommended applications...");
+        // 6b. Seed InstalledApp rows for the recommended module set — was
+        // previously a gap: the tenant, roles, user, org and departments were
+        // all created, but a brand-new tenant landed on the Application
+        // Wizard (W7) with nothing installed at all, kernel apps aside,
+        // regardless of the industry the signup form asked for and stored.
+        // getRecommendedInstallSlugs is the same function the Apps hub uses
+        // to prioritise suggestions post-signup — reused here so the two
+        // never recommend a different set from what auto-installs.
+        const recommendedSlugs = getRecommendedInstallSlugs(dto.industry);
+        if (recommendedSlugs.length > 0) {
+          await runWithTenantSession(
+            { tenantId: tenant.id, userId: user.id },
+            async () => {
+              for (const slug of recommendedSlugs) {
+                await prisma.installedApp.create({
+                  data: {
+                    tenantId: tenant.id,
+                    appId: slug,
+                    appSlug: slug,
+                    status: "ACTIVE",
+                    installedBy: user.id,
+                    source: "CATALOG",
+                  },
+                });
+              }
+            },
+          );
+        }
+
         await updateProgress(
           95,
           "Generating secure email verification token...",
@@ -646,8 +697,13 @@ export class AuthService {
 
   /**
    * Resolves a user's role names and flattened permission list.
+   *
+   * Public because the OIDC authorization server needs exactly this to build
+   * token claims. Duplicating it there would mean two implementations of the
+   * RLS-session handling described below, which is precisely the drift the
+   * comment underneath warns about.
    */
-  private async resolveRolesAndPermissions(userId: string, tenantId?: string) {
+  async resolveRolesAndPermissions(userId: string, tenantId?: string) {
     // UserRole has no tenantId of its own, but it `include`s Role, which is
     // RLS-protected. § 5.1: a join table is exempt from where-clause injection
     // and NOT from the session GUC, because the relation it pulls in is
@@ -662,12 +718,7 @@ export class AuthService {
     const roles = userRoles.map((ur) => ur.role.name);
     const permissions: string[] = [];
     for (const ur of userRoles) {
-      try {
-        const perms = JSON.parse(ur.role.permissions as string);
-        if (Array.isArray(perms)) permissions.push(...perms);
-      } catch {
-        // Skip malformed permissions
-      }
+      permissions.push(...parseRolePermissions(ur.role.permissions));
     }
     return { roles, permissions };
   }
@@ -724,6 +775,23 @@ export class AuthService {
           },
         });
 
+        // Concurrent-session policy: revoke the oldest active sessions past
+        // the cap, keeping the one just created. Runs after the new row
+        // exists so a user at exactly the cap never has zero active sessions
+        // between the two operations.
+        const activeSessions = await idpPrisma.userSession.findMany({
+          where: { userId: user.id, isActive: true },
+          orderBy: { lastActivityAt: "desc" },
+          select: { id: true },
+        });
+        const overCap = activeSessions.slice(MAX_CONCURRENT_SESSIONS);
+        if (overCap.length > 0) {
+          await idpPrisma.userSession.updateMany({
+            where: { id: { in: overCap.map((s) => s.id) } },
+            data: { isActive: false },
+          });
+        }
+
         // Record successful login history
         await prisma.loginHistory.create({
           data: {
@@ -762,6 +830,11 @@ export class AuthService {
             lockedUntil: null,
           },
         });
+
+        // Office and campus networks put many legitimate users behind one
+        // address; without this their combined typos would eventually lock the
+        // whole building out.
+        await this.loginThrottle?.recordSuccess(context?.ipAddress);
 
         return {
           token,
@@ -911,6 +984,16 @@ export class AuthService {
     dto: LoginInput & { tenantSlug?: string },
     context?: SessionContext,
   ) {
+    // Per-ORIGIN bound, checked before any credential work.
+    //
+    // The per-account lockout below stops one account being singled out. It
+    // does nothing about one origin spraying a common password across many
+    // accounts — each account sees only two or three failures, well under its
+    // own threshold, while the whole user list gets swept. Checking here also
+    // means a throttled origin cannot use response timing to tell "unknown
+    // user" from "wrong password".
+    await this.loginThrottle?.assertNotThrottled(context?.ipAddress);
+
     let tenantId = "";
 
     if (dto.tenantSlug) {
@@ -1147,6 +1230,7 @@ export class AuthService {
       shouldLock ? "ACCOUNT_LOCKED" : "INVALID_CREDENTIALS",
       context,
     );
+    await this.loginThrottle?.recordFailure(context?.ipAddress);
   }
 
   /**
@@ -1416,7 +1500,17 @@ export class AuthService {
     }
 
     if (currentSid) await this.revokeSessionById(currentSid);
-    return this.issueSession(target, context);
+    const result = await this.issueSession(target, context);
+    await emitAuthAudit({
+      tenantId: target.tenantId,
+      userId,
+      action: "AUTH_TENANT_SWITCH",
+      entityType: "Tenant",
+      entityId: target.tenantId,
+      changes: { fromSid: currentSid ?? null, toTenantSlug: tenantSlug },
+      ipAddress: context?.ipAddress ?? undefined,
+    });
+    return result;
   }
 
   /**
@@ -1804,12 +1898,6 @@ export class AuthService {
      Email OTP — real-time verification during registration
      ───────────────────────────────────────────────────────── */
 
-  /** In-memory OTP store. In production, use Redis with a TTL. */
-  private readonly otpStore = new Map<
-    string,
-    { code: string; expiresAt: number; attempts: number }
-  >();
-
   private generateOtp(): string {
     return String(randomInt(100000, 1000000));
   }
@@ -1818,35 +1906,35 @@ export class AuthService {
     email: string,
   ): Promise<{ message: string; cooldownSeconds: number }> {
     const normalized = email.toLowerCase().trim();
-    const existing = this.otpStore.get(normalized);
 
-    // Rate-limit: 60s cooldown per email
-    if (existing) {
-      const elapsed = Date.now() - (existing.expiresAt - 5 * 60 * 1000);
-      if (elapsed < 60000 && existing.attempts > 0) {
-        const remaining = Math.ceil((60000 - elapsed) / 1000);
-        return {
-          message: `Please wait ${remaining}s before requesting a new code.`,
-          cooldownSeconds: remaining,
-        };
-      }
+    const cooldown = this.otpStore
+      ? await this.otpStore.secondsUntilResendAllowed(normalized)
+      : 0;
+    if (cooldown > 0) {
+      return {
+        message: `Please wait ${cooldown}s before requesting a new code.`,
+        cooldownSeconds: cooldown,
+      };
     }
 
     const code = this.generateOtp();
-    this.otpStore.set(normalized, {
-      code,
-      expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes
-      attempts: 0,
-    });
+    await this.otpStore?.issue(normalized, code);
 
     await this.dispatchAuthEmail({
       to: normalized,
       tenantId: "",
       subject: "Your UniERP verification code",
-      body: `Your verification code is: ${code}\n\nThis code expires in 5 minutes.\n\nIf you did not request this, please ignore this email.`,
+      body: `Your verification code is: ${code}
+
+This code expires in 5 minutes.
+
+If you did not request this, please ignore this email.`,
     });
 
-    this.logger.log(`[OTP] Code ${code} sent to ${normalized}`);
+    // The code itself is NOT logged. It was, and anyone with read access to the
+    // application logs could have completed a stranger's email verification
+    // without ever seeing their inbox.
+    this.logger.log(`[OTP] Verification code dispatched to ${normalized}`);
     return {
       message: "Verification code sent to your email.",
       cooldownSeconds: 60,
@@ -1858,41 +1946,41 @@ export class AuthService {
     code: string,
   ): Promise<{ verified: boolean; message: string }> {
     const normalized = email.toLowerCase().trim();
-    const record = this.otpStore.get(normalized);
 
-    if (!record) {
+    if (!this.otpStore) {
       return {
         verified: false,
         message: "No verification code found. Request a new one.",
       };
     }
 
-    if (Date.now() > record.expiresAt) {
-      this.otpStore.delete(normalized);
-      return {
-        verified: false,
-        message: "Verification code has expired. Request a new one.",
-      };
+    const result = await this.otpStore.verify(normalized, code);
+    if (result.ok) {
+      return { verified: true, message: "Email verified successfully." };
     }
 
-    record.attempts += 1;
-    if (record.attempts > 5) {
-      this.otpStore.delete(normalized);
-      return {
-        verified: false,
-        message: "Too many failed attempts. Request a new code.",
-      };
+    switch (result.reason) {
+      case "expired":
+        return {
+          verified: false,
+          message: "Verification code has expired. Request a new one.",
+        };
+      case "too-many-attempts":
+        return {
+          verified: false,
+          message: "Too many failed attempts. Request a new code.",
+        };
+      case "mismatch":
+        return {
+          verified: false,
+          message: "Invalid verification code. Please try again.",
+        };
+      default:
+        return {
+          verified: false,
+          message: "No verification code found. Request a new one.",
+        };
     }
-
-    if (record.code !== code.trim()) {
-      return {
-        verified: false,
-        message: "Invalid verification code. Please try again.",
-      };
-    }
-
-    this.otpStore.delete(normalized);
-    return { verified: true, message: "Email verified successfully." };
   }
 
   async getOnboardingStatus(
