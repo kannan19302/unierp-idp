@@ -16,6 +16,8 @@ import { IdpModels } from "@kannan19302/database";
 import {
   hashPassword,
   comparePassword,
+  comparePasswordWithRehash,
+  checkPasswordBreach,
   signSessionToken,
   signTypedToken,
   verifyTypedToken,
@@ -293,6 +295,15 @@ export class AuthService {
       await updateProgress(10, "Initializing setup...");
 
       // Hash the administrator's password
+      // Check if the password has been exposed in known breaches (HIBP k-anonymity).
+      // This is advisory during registration — we reject passwords seen >100 times
+      // to prevent the most commonly-breached passwords from entering the system.
+      const breachCount = await checkPasswordBreach(dto.password);
+      if (breachCount > 100) {
+        throw new BadRequestException(
+          `This password has appeared in ${breachCount.toLocaleString()} known data breaches. Please choose a different password.`,
+        );
+      }
       const hashedPassword = await hashPassword(dto.password);
 
       // Run creation in a transaction
@@ -586,6 +597,19 @@ export class AuthService {
         "success",
       );
 
+      await emitAuthAudit({
+        tenantId: result.tenant.id,
+        userId: result.user.id,
+        action: "USER_REGISTERED",
+        entityType: "User",
+        entityId: result.user.id,
+        changes: {
+          organizationName: dto.organizationName,
+          email: result.user.email,
+          slug: result.tenant.slug,
+        },
+      });
+
       const { verificationToken: _token, ...publicResult } = result;
       if (this.isProduction) {
         return publicResult;
@@ -636,6 +660,14 @@ export class AuthService {
           }),
         ]),
     );
+
+    await emitAuthAudit({
+      tenantId: record.tenant_id,
+      userId: record.user_id,
+      action: "EMAIL_VERIFIED",
+      entityType: "User",
+      entityId: record.user_id,
+    });
 
     return { message: "Email verified successfully." };
   }
@@ -790,6 +822,38 @@ export class AuthService {
             where: { id: { in: overCap.map((s) => s.id) } },
             data: { isActive: false },
           });
+        }
+
+        // Security notification: check for new device/location login
+        if (context?.ipAddress || context?.userAgent) {
+          const prevLogins = await prisma.loginHistory.findMany({
+            where: {
+              userId: user.id,
+              status: "SUCCESS",
+            },
+            take: 5,
+            orderBy: { createdAt: "desc" },
+            select: { ipAddress: true, device: true, browser: true },
+          }).catch(() => []);
+
+          const isNewDeviceOrLocation =
+            prevLogins.length > 0 &&
+            !prevLogins.some(
+              (h) =>
+                (context?.ipAddress && h.ipAddress === context.ipAddress) ||
+                (parsedUa.device && h.device === parsedUa.device),
+            );
+
+          if (isNewDeviceOrLocation && user.email) {
+            const loc = context?.ipAddress ? getGeoHint(context.ipAddress) : "Unknown Location";
+            const dev = [parsedUa.browser, parsedUa.device].filter(Boolean).join(" on ") || "New device";
+            this.dispatchAuthEmail({
+              to: user.email,
+              tenantId: user.tenantId,
+              subject: "Security Alert: New sign-in to your UniERP account",
+              body: `A new sign-in was detected for your account from ${dev} (${loc}, IP: ${context?.ipAddress || "unknown"}). If this was not you, please secure your account immediately by resetting your password.`,
+            });
+          }
         }
 
         // Record successful login history
@@ -1139,12 +1203,12 @@ export class AuthService {
       }
     }
 
-    // Validate password
-    const isPasswordValid = await comparePassword(
+    // Validate password — and check if the hash needs upgrading to Argon2id.
+    const verifyResult = await comparePasswordWithRehash(
       dto.password,
       user.passwordHash,
     );
-    if (!isPasswordValid) {
+    if (!verifyResult.valid) {
       await this.registerFailedAttempt(
         user.id,
         user.tenantId,
@@ -1152,6 +1216,20 @@ export class AuthService {
         context,
       );
       throw new UnauthorizedException("Invalid credentials");
+    }
+
+    // Transparent bcrypt → Argon2id migration on successful login.
+    if (verifyResult.needsRehash) {
+      const newHash = await hashPassword(dto.password);
+      await idpPrisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash: newHash },
+      }).catch((err) => {
+        // Best-effort: a rehash failure must not fail the login.
+        this.logger.warn(
+          `Failed to rehash password for user ${user.id}: ${err instanceof Error ? err.message : err}`,
+        );
+      });
     }
 
     if (user.status !== "ACTIVE") {
@@ -1411,6 +1489,13 @@ export class AuthService {
       );
       if (!isPasswordValid)
         throw new UnauthorizedException("Invalid current password");
+
+      const breachCount = await checkPasswordBreach(dto.newPassword);
+      if (breachCount > 100) {
+        throw new BadRequestException(
+          `This password has appeared in ${breachCount.toLocaleString()} known data breaches. Please choose a different password.`,
+        );
+      }
       updateData.passwordHash = await hashPassword(dto.newPassword);
       updateData.passwordChangedAt = new Date();
     }
@@ -1427,6 +1512,25 @@ export class AuthService {
       where: { id: userId },
       data: updateData,
     });
+
+    if (dto.newPassword) {
+      await emitAuthAudit({
+        tenantId: user.tenantId,
+        userId: user.id,
+        action: "PASSWORD_CHANGED",
+        entityType: "User",
+        entityId: user.id,
+      });
+    } else {
+      await emitAuthAudit({
+        tenantId: user.tenantId,
+        userId: user.id,
+        action: "PROFILE_UPDATED",
+        entityType: "User",
+        entityId: user.id,
+        changes: { firstName: dto.firstName, lastName: dto.lastName },
+      });
+    }
 
     // Note: the "profile" onboarding step is now derived live from
     // `User.avatar` (see onboarding.service.ts) rather than manually marked
@@ -1563,6 +1667,15 @@ export class AuthService {
       body: `A password reset was requested for your account. Reset it here: ${resetLink}\nIf you didn't request this, you can ignore this email.`,
     });
 
+    await emitAuthAudit({
+      tenantId: match.tenant_id,
+      userId: match.id,
+      action: "PASSWORD_RESET_REQUESTED",
+      entityType: "User",
+      entityId: match.id,
+      changes: { email: dto.email.toLowerCase() },
+    });
+
     // Never return the token in production; expose it only for local dev ergonomics.
     if (this.isProduction) {
       return { message: genericMessage };
@@ -1593,6 +1706,12 @@ export class AuthService {
       throw new BadRequestException("Invalid or expired password reset token.");
     }
 
+    const breachCount = await checkPasswordBreach(dto.password);
+    if (breachCount > 100) {
+      throw new BadRequestException(
+        `This password has appeared in ${breachCount.toLocaleString()} known data breaches. Please choose a different password.`,
+      );
+    }
     const hashedPassword = await hashPassword(dto.password);
 
     await runWithTenantSession(
@@ -1615,6 +1734,14 @@ export class AuthService {
           }),
         ]),
     );
+
+    await emitAuthAudit({
+      tenantId: record.tenant_id,
+      userId: record.user_id,
+      action: "PASSWORD_RESET_COMPLETED",
+      entityType: "User",
+      entityId: record.user_id,
+    });
 
     return { message: "Password reset successfully. You can now log in." };
   }
@@ -1755,6 +1882,13 @@ export class AuthService {
           mfaRecoveryCodes: [],
         },
       });
+      await emitAuthAudit({
+        tenantId: user.tenantId,
+        userId: user.id,
+        action: "MFA_DISABLED",
+        entityType: "User",
+        entityId: user.id,
+      });
       return { message: "MFA disabled successfully." };
     }
 
@@ -1762,6 +1896,14 @@ export class AuthService {
     await idpPrisma.user.update({
       where: { id: userId },
       data: { mfaEnabled: true, mfaPending: false, mfaRecoveryCodes: hashes },
+    });
+
+    await emitAuthAudit({
+      tenantId: user.tenantId,
+      userId: user.id,
+      action: "MFA_ENABLED",
+      entityType: "User",
+      entityId: user.id,
     });
 
     return {
@@ -1874,6 +2016,14 @@ export class AuthService {
       },
       data: { isActive: false },
     });
+    await emitAuthAudit({
+      tenantId,
+      userId,
+      action: "OTHER_SESSIONS_REVOKED",
+      entityType: "UserSession",
+      entityId: userId,
+      changes: { revokedCount: result.count },
+    });
     return { revoked: result.count };
   }
 
@@ -1891,6 +2041,13 @@ export class AuthService {
     if (result.count === 0) {
       throw new NotFoundException("Session not found.");
     }
+    await emitAuthAudit({
+      tenantId,
+      userId,
+      action: "SESSION_REVOKED",
+      entityType: "UserSession",
+      entityId: sid,
+    });
     return { revoked: true };
   }
 

@@ -196,6 +196,11 @@ async function bootstrap() {
       "oidc/end_session",
       "oidc/login",
       "oidc/login/mfa",
+      "oidc/register",
+      "oidc/forgot-password",
+      "oidc/reset-password",
+      "oidc/verify-email",
+      "oidc/verify-email/resend",
       "oidc/consent",
     ],
   });

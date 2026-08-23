@@ -35,6 +35,12 @@ describe("OAuthService", () => {
           tenantId: process.env.MICROSOFT_OAUTH_TENANT ?? "",
         };
       }
+      if (provider === "github-oauth") {
+        return {
+          clientId: process.env.GITHUB_OAUTH_CLIENT_ID ?? "",
+          clientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET ?? "",
+        };
+      }
       return {};
     }),
   } as unknown as PlatformCredentialsService;
@@ -48,11 +54,15 @@ describe("OAuthService", () => {
     delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
     delete process.env.MICROSOFT_OAUTH_CLIENT_ID;
     delete process.env.MICROSOFT_OAUTH_CLIENT_SECRET;
+    delete process.env.GITHUB_OAUTH_CLIENT_ID;
+    delete process.env.GITHUB_OAUTH_CLIENT_SECRET;
   });
 
   afterEach(() => {
     delete process.env.GOOGLE_OAUTH_CLIENT_ID;
     delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    delete process.env.GITHUB_OAUTH_CLIENT_ID;
+    delete process.env.GITHUB_OAUTH_CLIENT_SECRET;
   });
 
   it("advertises no providers when nothing is configured", async () => {

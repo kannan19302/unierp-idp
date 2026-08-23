@@ -30,18 +30,16 @@ export function csrfMiddleware(
     return next();
   }
 
-  // Skip CSRF for login/register — no cookie exists yet
+
+
   const path = req.path || req.url;
-  if (path.includes("/auth/login") || path.includes("/auth/register")) {
-    return next();
-  }
 
   // Skip CSRF for public endpoints (web forms, RFQ bids)
   if (path.includes("/public/")) {
     return next();
   }
 
-  // Skip CSRF for the OAuth 2.0 / OIDC protocol endpoints.
+  // Skip CSRF for the programmatic OAuth 2.0 / OIDC protocol endpoints.
   //
   // CSRF protects against a request the browser makes with ambient authority —
   // a cookie it attaches automatically. The token endpoint has no ambient
@@ -51,7 +49,19 @@ export function csrfMiddleware(
   // and by native clients that have no cookie jar and no way to read a CSRF
   // cookie, so the check cannot be satisfied by a conformant OAuth client at
   // all — it would simply make the flow impossible rather than safer.
-  if (path.startsWith("/oidc/")) {
+  //
+  // NOTE: This MUST NOT bypass /oidc/login, /oidc/register, or /oidc/mfa,
+  // which are standard browser-based web forms that rely on the session cookie
+  // and MUST be CSRF-protected.
+  const programmaticOidcEndpoints = [
+    "/oidc/token",
+    "/oidc/revoke",
+    "/oidc/introspect",
+    "/oidc/userinfo",
+    "/.well-known/openid-configuration",
+    "/oidc/jwks.json",
+  ];
+  if (programmaticOidcEndpoints.some((p) => path.endsWith(p))) {
     return next();
   }
 

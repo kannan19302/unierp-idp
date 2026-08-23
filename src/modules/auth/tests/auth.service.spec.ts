@@ -111,6 +111,8 @@ vi.mock("@kannan19302/auth", () => {
   return {
     hashPassword: vi.fn().mockResolvedValue("hashed_pass_123"),
     comparePassword: vi.fn().mockResolvedValue(true),
+    comparePasswordWithRehash: vi.fn().mockResolvedValue({ valid: true, needsRehash: false }),
+    checkPasswordBreach: vi.fn().mockResolvedValue(0),
     signToken: vi.fn().mockReturnValue("jwt_token_abc"),
     signSessionToken: vi.fn().mockReturnValue("jwt_session_abc"),
     signTypedToken: vi.fn().mockReturnValue("typed_token_abc"),

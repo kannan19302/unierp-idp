@@ -20,7 +20,7 @@ import { PlatformCredentialsService } from "../../common/platform-credentials/pl
  * is only used for first-time account matching, never for re-identification.
  */
 
-export type OAuthProviderName = "google" | "microsoft";
+export type OAuthProviderName = "google" | "microsoft" | "github";
 
 interface ProviderConfig {
   authorizeUrl: string;
@@ -74,24 +74,40 @@ export class OAuthService {
         scope: "openid email profile",
       };
     }
-    const creds = await this.platformCredentialsService.get("microsoft-oauth");
-    const clientId = creds.clientId;
-    const clientSecret = creds.clientSecret;
-    if (!clientId || !clientSecret) return null;
-    const entraTenant = creds.tenantId || "common";
-    return {
-      authorizeUrl: `https://login.microsoftonline.com/${entraTenant}/oauth2/v2.0/authorize`,
-      tokenUrl: `https://login.microsoftonline.com/${entraTenant}/oauth2/v2.0/token`,
-      clientId,
-      clientSecret,
-      scope: "openid email profile",
-    };
+    if (provider === "microsoft") {
+      const creds = await this.platformCredentialsService.get("microsoft-oauth");
+      const clientId = creds.clientId;
+      const clientSecret = creds.clientSecret;
+      if (!clientId || !clientSecret) return null;
+      const entraTenant = creds.tenantId || "common";
+      return {
+        authorizeUrl: `https://login.microsoftonline.com/${entraTenant}/oauth2/v2.0/authorize`,
+        tokenUrl: `https://login.microsoftonline.com/${entraTenant}/oauth2/v2.0/token`,
+        clientId,
+        clientSecret,
+        scope: "openid email profile",
+      };
+    }
+    if (provider === "github") {
+      const creds = await this.platformCredentialsService.get("github-oauth");
+      const clientId = creds.clientId || process.env.GITHUB_OAUTH_CLIENT_ID;
+      const clientSecret = creds.clientSecret || process.env.GITHUB_OAUTH_CLIENT_SECRET;
+      if (!clientId || !clientSecret) return null;
+      return {
+        authorizeUrl: "https://github.com/login/oauth/authorize",
+        tokenUrl: "https://github.com/login/oauth/access_token",
+        clientId,
+        clientSecret,
+        scope: "read:user user:email",
+      };
+    }
+    return null;
   }
 
   /** Providers that are fully configured — drives the login page buttons. */
   async listProviders() {
     const results = await Promise.all(
-      (["google", "microsoft"] as const).map(async (p) => ({
+      (["google", "microsoft", "github"] as const).map(async (p) => ({
         p,
         configured: Boolean(await this.providerConfig(p)),
       })),
@@ -103,11 +119,12 @@ export class OAuthService {
 
   /**
    * Builds the provider authorization URL with a signed, single-round-trip
-   * `state` (CSRF guard + carries the optional tenant slug).
+   * `state` (CSRF guard + carries the optional tenant slug and return_to).
    */
   async buildAuthorizationUrl(
     provider: OAuthProviderName,
     tenantSlug?: string,
+    returnTo?: string,
   ) {
     const config = await this.providerConfig(provider);
     if (!config) {
@@ -121,6 +138,7 @@ export class OAuthService {
       {
         provider,
         tenantSlug: tenantSlug || null,
+        returnTo: returnTo || null,
         nonce: randomBytes(12).toString("hex"),
       },
       STATE_TTL,
@@ -154,6 +172,7 @@ export class OAuthService {
     const decodedState = verifyTypedToken<{
       provider: string;
       tenantSlug: string | null;
+      returnTo?: string | null;
     }>(state, TOKEN_TYPE.OAUTH_STATE);
     if (!decodedState || decodedState.provider !== provider) {
       throw new UnauthorizedException("Invalid or expired sign-in state.");
@@ -171,7 +190,11 @@ export class OAuthService {
       profile,
       decodedState.tenantSlug,
     );
-    return this.authService.issueSession(user, context);
+    const session = await this.authService.issueSession(user, context);
+    return {
+      ...session,
+      returnTo: decodedState.returnTo || null,
+    };
   }
 
   /** Exchanges the authorization code and normalizes the provider profile. */
@@ -184,6 +207,83 @@ export class OAuthService {
       throw new BadRequestException(
         `${provider} sign-in is not configured on this server.`,
       );
+    }
+
+    if (provider === "github") {
+      const tokenRes = await fetch(config.tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          client_id: config.clientId,
+          client_secret: config.clientSecret,
+          code,
+          redirect_uri: this.redirectUri(provider),
+        }),
+      });
+      if (!tokenRes.ok) {
+        this.logger.warn(
+          `[oauth] github code exchange failed: ${tokenRes.status} ${await tokenRes.text().catch(() => "")}`,
+        );
+        throw new UnauthorizedException("Sign-in could not be completed.");
+      }
+      const tokenData = (await tokenRes.json()) as { access_token?: string };
+      if (!tokenData.access_token) {
+        throw new UnauthorizedException("GitHub returned no access token.");
+      }
+
+      const userRes = await fetch("https://api.github.com/user", {
+        headers: {
+          Authorization: `Bearer ${tokenData.access_token}`,
+          "User-Agent": "UniERP-IdP",
+        },
+      });
+      if (!userRes.ok) {
+        throw new UnauthorizedException("Could not fetch GitHub user profile.");
+      }
+      const userData = (await userRes.json()) as {
+        id: number;
+        name?: string;
+        email?: string;
+        login: string;
+      };
+
+      let email = userData.email?.toLowerCase();
+      let emailVerified = Boolean(email);
+
+      if (!email) {
+        const emailsRes = await fetch("https://api.github.com/user/emails", {
+          headers: {
+            Authorization: `Bearer ${tokenData.access_token}`,
+            "User-Agent": "UniERP-IdP",
+          },
+        });
+        if (emailsRes.ok) {
+          const emails = (await emailsRes.json()) as Array<{
+            email: string;
+            primary: boolean;
+            verified: boolean;
+          }>;
+          const primary =
+            emails.find((e) => e.primary && e.verified) ||
+            emails.find((e) => e.verified);
+          if (primary) {
+            email = primary.email.toLowerCase();
+            emailVerified = true;
+          }
+        }
+      }
+
+      const name = userData.name || userData.login || "";
+      return {
+        subject: String(userData.id),
+        email: email || "",
+        emailVerified,
+        firstName: name.split(" ")[0] || userData.login,
+        lastName: name.split(" ").slice(1).join(" ") || undefined,
+      };
     }
 
     const tokenRes = await fetch(config.tokenUrl, {
@@ -212,9 +312,6 @@ export class OAuthService {
       );
     }
 
-    // The id_token comes straight from the provider's token endpoint over TLS
-    // in a confidential-client exchange, so its claims are trustworthy without
-    // an extra signature check (there is no third party in this hop).
     const claims = JSON.parse(
       Buffer.from(tokens.id_token.split(".")[1] ?? "", "base64url").toString(
         "utf8",

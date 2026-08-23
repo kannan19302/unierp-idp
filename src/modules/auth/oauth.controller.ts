@@ -21,7 +21,7 @@ function appUrl() {
 }
 
 function assertProvider(value: string): OAuthProviderName {
-  if (value !== "google" && value !== "microsoft") {
+  if (value !== "google" && value !== "microsoft" && value !== "github") {
     throw new BadRequestException("Unknown OAuth provider.");
   }
   return value;
@@ -49,12 +49,14 @@ export class OAuthController {
   async start(
     @Param("provider") providerParam: string,
     @Query("tenantSlug") tenantSlug: string | undefined,
+    @Query("return_to") returnTo: string | undefined,
     @Res() res: Response,
   ) {
     const provider = assertProvider(providerParam);
     const url = await this.oauthService.buildAuthorizationUrl(
       provider,
       tenantSlug,
+      returnTo,
     );
     res.redirect(url);
   }
@@ -72,7 +74,7 @@ export class OAuthController {
   ) {
     const provider = assertProvider(providerParam);
     const fail = (message: string) =>
-      res.redirect(`${appUrl()}/login?error=${encodeURIComponent(message)}`);
+      res.redirect(`/oidc/login?error=${encodeURIComponent(message)}`);
 
     if (providerError) {
       return fail(`Sign-in was cancelled (${providerError}).`);
@@ -98,19 +100,21 @@ export class OAuthController {
       res.cookie(AUTH_COOKIE, result.token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
+        sameSite: "lax",
         path: "/",
         maxAge: 24 * 60 * 60 * 1000,
       });
       res.cookie(REFRESH_COOKIE, result.refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
+        sameSite: "lax",
         path: REFRESH_COOKIE_PATH,
         expires: result.refreshExpiresAt,
       });
-      // The complete page rotates the refresh cookie into a client-side
-      // session (localStorage token + user) and forwards to the workspace.
+
+      if (result.returnTo) {
+        return res.redirect(result.returnTo);
+      }
       return res.redirect(`${appUrl()}/oauth/complete`);
     } catch (err) {
       const message =
