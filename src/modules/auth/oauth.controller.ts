@@ -6,11 +6,14 @@ import {
   Req,
   Res,
   BadRequestException,
+  UseGuards,
 } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Request, Response } from "express";
 import { OAuthService, OAuthProviderName } from "./oauth.service";
+import type { ExternalAuthJourney } from "./external-auth.store";
+import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 
 const AUTH_COOKIE = "auth_token";
 const REFRESH_COOKIE = "refresh_token";
@@ -27,6 +30,12 @@ function assertProvider(value: string): OAuthProviderName {
   return value;
 }
 
+function assertJourney(value?: string): ExternalAuthJourney {
+  if (!value || value === "login") return "login";
+  if (value === "register") return value;
+  throw new BadRequestException("Unknown external authentication journey.");
+}
+
 /**
  * Browser-redirect endpoints for the OAuth authorization-code flow. These are
  * top-level navigations (not fetch), so they live outside the JSON API shape:
@@ -39,8 +48,8 @@ export class OAuthController {
 
   @ApiOperation({ summary: "List configured OAuth providers" })
   @Get("providers")
-  async listProviders() {
-    return this.oauthService.listProviders();
+  async listProviders(@Query("journey") journeyParam?: string) {
+    return this.oauthService.listProviders(assertJourney(journeyParam));
   }
 
   @ApiOperation({ summary: "Start OAuth sign-in (302 to the provider)" })
@@ -50,6 +59,7 @@ export class OAuthController {
     @Param("provider") providerParam: string,
     @Query("tenantSlug") tenantSlug: string | undefined,
     @Query("return_to") returnTo: string | undefined,
+    @Query("journey") journeyParam: string | undefined,
     @Res() res: Response,
   ) {
     const provider = assertProvider(providerParam);
@@ -57,6 +67,36 @@ export class OAuthController {
       provider,
       tenantSlug,
       returnTo,
+      assertJourney(journeyParam),
+    );
+    res.redirect(url);
+  }
+
+  @ApiOperation({ summary: "Connect an external provider to the current account" })
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @UseGuards(JwtAuthGuard)
+  @Get(":provider/link")
+  async link(
+    @Param("provider") providerParam: string,
+    @Query("return_to") returnTo: string | undefined,
+    @Req() req: Request & {
+      user?: { userId?: string; tenantId?: string; sid?: string };
+    },
+    @Res() res: Response,
+  ) {
+    const provider = assertProvider(providerParam);
+    const userId = req.user?.userId;
+    const tenantId = req.user?.tenantId;
+    const sid = req.user?.sid;
+    if (!userId || !tenantId || !sid) {
+      throw new BadRequestException("A tenant user session is required.");
+    }
+    const url = await this.oauthService.buildLinkAuthorizationUrl(
+      provider,
+      userId,
+      tenantId,
+      sid,
+      returnTo || "/oidc/account",
     );
     res.redirect(url);
   }
@@ -97,19 +137,27 @@ export class OAuthController {
         },
       );
 
-      res.cookie(AUTH_COOKIE, result.token, {
+      if (result.kind === "registration") {
+        const params = new URLSearchParams({
+          external_auth: result.registrationTicket,
+          return_to: result.returnTo,
+        });
+        return res.redirect(`/oidc/register?${params.toString()}`);
+      }
+
+      res.cookie(AUTH_COOKIE, String(result.token || ""), {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
         path: "/",
         maxAge: 24 * 60 * 60 * 1000,
       });
-      res.cookie(REFRESH_COOKIE, result.refreshToken, {
+      res.cookie(REFRESH_COOKIE, String(result.refreshToken || ""), {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
         path: REFRESH_COOKIE_PATH,
-        expires: result.refreshExpiresAt,
+        expires: result.refreshExpiresAt as Date,
       });
 
       if (result.returnTo) {

@@ -5,6 +5,38 @@ const CSRF_COOKIE = "csrf_token";
 const CSRF_HEADER = "x-csrf-token";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+// The hosted IdP forms use a separate synchronizer-token implementation in
+// LoginController: an HttpOnly, SameSite=Lax `oidc_csrf` cookie paired with a
+// hidden `_csrf` field and constant-time verification. Ordinary API callers
+// use the double-submit `csrf_token` cookie plus `x-csrf-token` header below.
+//
+// Browsers cannot attach a custom header to a native HTML form submission, so
+// applying both mechanisms made every otherwise-valid hosted form fail before
+// its controller-level CSRF check ran. Keep this list exact: a prefix match
+// would accidentally exempt unrelated future OIDC routes.
+const CONTROLLER_CSRF_PROTECTED_FORM_PATHS = new Set([
+  "/oidc/account/unlink",
+  "/oidc/login",
+  "/oidc/login/mfa",
+  "/oidc/register",
+  "/oidc/forgot-password",
+  "/oidc/reset-password",
+  "/oidc/verify-email/resend",
+  "/oidc/passkeys/registration/options",
+  "/oidc/passkeys/registration/verify",
+  "/oidc/passkeys/authentication/options",
+  "/oidc/passkeys/authentication/verify",
+  "/oidc/passkeys/delete",
+  "/oidc/account/governance/organization/switch",
+  "/oidc/account/governance/organization/leave",
+  "/oidc/account/governance/privacy/export",
+  "/oidc/account/governance/privacy/deletion/request",
+  "/oidc/account/governance/privacy/deletion/cancel",
+  "/oidc/account/contact/add",
+  "/oidc/account/contact/resend",
+  "/oidc/account/contact/remove",
+]);
+
 function generateCsrfToken(): string {
   return crypto.randomBytes(32).toString("hex");
 }
@@ -30,9 +62,29 @@ export function csrfMiddleware(
     return next();
   }
 
-
+  // A Bearer token is explicit request authority, not an ambient browser
+  // credential. Cross-site HTML forms cannot set Authorization and scripted
+  // cross-origin requests must pass CORS preflight, so applying a cookie
+  // double-submit check here blocks conforming OIDC/native clients without
+  // mitigating CSRF. JwtAuthGuard still validates the token after middleware;
+  // this exemption does not make a forged Bearer value authoritative.
+  const authorization = req.headers.authorization;
+  if (typeof authorization === "string" && /^Bearer\s+\S+$/i.test(authorization)) {
+    return next();
+  }
 
   const path = req.path || req.url;
+
+  // Provider callbacks carry their own cryptographic/authentication proof and
+  // never use browser cookies. Applying double-submit CSRF would make these
+  // server-to-server endpoints impossible to call.
+  if (path.startsWith("/api/v1/email/webhooks/")) {
+    return next();
+  }
+
+  if (CONTROLLER_CSRF_PROTECTED_FORM_PATHS.has(path)) {
+    return next();
+  }
 
   // Skip CSRF for public endpoints (web forms, RFQ bids)
   if (path.includes("/public/")) {
@@ -50,9 +102,8 @@ export function csrfMiddleware(
   // cookie, so the check cannot be satisfied by a conformant OAuth client at
   // all — it would simply make the flow impossible rather than safer.
   //
-  // NOTE: This MUST NOT bypass /oidc/login, /oidc/register, or /oidc/mfa,
-  // which are standard browser-based web forms that rely on the session cookie
-  // and MUST be CSRF-protected.
+  // Hosted browser forms are deliberately not listed here. Their exact paths
+  // are delegated above to LoginController's synchronizer-token checks.
   const programmaticOidcEndpoints = [
     "/oidc/token",
     "/oidc/revoke",

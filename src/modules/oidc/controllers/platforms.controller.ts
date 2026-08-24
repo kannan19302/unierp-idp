@@ -26,7 +26,10 @@ export class PlatformsController {
   @ApiOperation({ summary: "Platforms entitled to the current session" })
   @Get("platforms")
   @Header("Cache-Control", "no-store")
-  async listPlatforms(@Headers("authorization") authorization?: string) {
+  async listPlatforms(
+    @Headers("authorization") authorization?: string,
+    @Headers("x-request-id") requestId?: string,
+  ) {
     if (!authorization?.toLowerCase().startsWith("bearer ")) {
       throw new UnauthorizedException("Bearer token required");
     }
@@ -48,8 +51,15 @@ export class PlatformsController {
       roles: (payload.roles as string[]) ?? [],
       permissions: (payload.permissions as string[]) ?? [],
       tenantId: String(payload.tenantId ?? ""),
+      userId: String(payload.sub ?? "") || undefined,
+      assurance: typeof payload.acr === "string" ? payload.acr : undefined,
     });
 
-    return { platforms };
+    return {
+      policyVersion: "platform-policy/2026-08-24",
+      evaluatedAt: new Date().toISOString(),
+      requestId: requestId || undefined,
+      platforms,
+    };
   }
 }

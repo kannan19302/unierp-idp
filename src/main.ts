@@ -80,7 +80,8 @@ async function bootstrap() {
         if (
           req.originalUrl &&
           (req.originalUrl.includes("/webhooks/stripe") ||
-            req.originalUrl.includes("/billing-webhooks/stripe"))
+            req.originalUrl.includes("/billing-webhooks/stripe") ||
+            req.originalUrl.includes("/email/webhooks/"))
         ) {
           req.rawBody = buf;
         }
@@ -194,6 +195,8 @@ async function bootstrap() {
       "oidc/revoke",
       "oidc/introspect",
       "oidc/end_session",
+      "oidc/account",
+      "oidc/account/unlink",
       "oidc/login",
       "oidc/login/mfa",
       "oidc/register",
@@ -202,6 +205,20 @@ async function bootstrap() {
       "oidc/verify-email",
       "oidc/verify-email/resend",
       "oidc/consent",
+      "oidc/passkeys/registration/options",
+      "oidc/passkeys/registration/verify",
+      "oidc/passkeys/authentication/options",
+      "oidc/passkeys/authentication/verify",
+      "oidc/passkeys/delete",
+      "oidc/account/governance/organization/switch",
+      "oidc/account/governance/organization/leave",
+      "oidc/account/governance/privacy/export",
+      "oidc/account/governance/privacy/deletion/request",
+      "oidc/account/governance/privacy/deletion/cancel",
+      "oidc/account/contact/add",
+      "oidc/account/contact/resend",
+      "oidc/account/contact/remove",
+      "oidc/account/contact/verify",
     ],
   });
 

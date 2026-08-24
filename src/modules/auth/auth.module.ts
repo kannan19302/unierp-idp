@@ -12,6 +12,10 @@ import { OnboardingController } from "./onboarding.controller";
 import { OnboardingService } from "./onboarding.service";
 import { LoginThrottleService } from "./login-throttle.service";
 import { OtpStore } from "./otp.store";
+import { ExternalAuthStore } from "./external-auth.store";
+import { PasskeyService } from "./passkey.service";
+import { AccountGovernanceService } from "./account-governance.service";
+import { AccountContactService } from "./account-contact.service";
 
 import { PlatformCredentialsModule } from "../../common/platform-credentials/platform-credentials.module";
 
@@ -28,6 +32,10 @@ import { PlatformCredentialsModule } from "../../common/platform-credentials/pla
     AuthService,
     LoginThrottleService,
     OtpStore,
+    ExternalAuthStore,
+    PasskeyService,
+    AccountGovernanceService,
+    AccountContactService,
     AuthDeepService,
     OAuthService,
     SsoService,
@@ -38,6 +46,10 @@ import { PlatformCredentialsModule } from "../../common/platform-credentials/pla
     AuthService,
     LoginThrottleService,
     OtpStore,
+    ExternalAuthStore,
+    PasskeyService,
+    AccountGovernanceService,
+    AccountContactService,
     AuthDeepService,
     OAuthService,
     SsoService,

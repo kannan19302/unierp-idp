@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
+import { IDENTITY_EMAIL_QUEUE } from "../../common/queues/queue.constants";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { randomBytes, createHash, randomUUID, randomInt } from "node:crypto";
 import * as webPush from "web-push";
@@ -49,6 +50,7 @@ import { LoginThrottleService } from "./login-throttle.service";
 import { OtpStore } from "./otp.store";
 import { getRecommendedInstallSlugs } from "../../common/app-slug-map";
 import { emitAuthAudit } from "../../common/audit/emit-auth-audit";
+import { getRegistrationLegalConfig } from "../../common/legal/legal-document.config";
 
 /** Failed logins allowed before the account is temporarily locked. */
 const MAX_FAILED_ATTEMPTS = 5;
@@ -70,6 +72,14 @@ const MAX_CONCURRENT_SESSIONS = parseInt(
   process.env.MAX_CONCURRENT_SESSIONS || "5",
   10,
 );
+const PROVIDER_LOGIN_ROLES = new Set([
+  "platform.admin",
+  "platform.sre",
+  "platform.support.l1",
+  "platform.support.l2",
+  "platform.billing",
+  "platform.security",
+]);
 
 // VAPID details are applied lazily per-send (see AuthService.configureWebPush)
 // rather than once at module load, so a key saved from the SaaS Portal
@@ -107,6 +117,16 @@ export interface SessionContext {
   platform?: string | null;
   appVersion?: string | null;
 }
+
+type ExternalRegistrationInput = Omit<
+  RegisterInput,
+  "password" | "confirmPassword"
+> & {
+  externalIdentity: {
+    provider: "google" | "microsoft" | "github";
+    subject: string;
+  };
+};
 
 /** Reduces a raw User-Agent string to a short "OS • Browser" label for the sessions UI. */
 function parseUserAgent(ua?: string | null): {
@@ -160,7 +180,7 @@ export class AuthService {
 
   constructor(
     @Optional()
-    @InjectQueue("email")
+    @InjectQueue(IDENTITY_EMAIL_QUEUE)
     private readonly emailQueue?: Queue,
     @Optional()
     private readonly provisioningService?: ProvisioningService,
@@ -204,9 +224,9 @@ export class AuthService {
   }
 
   /**
-   * Enqueues a transactional auth email. Delivery is best-effort: auth flows
-   * must never fail because the email queue is unavailable (the developer
-   * link / resend path covers recovery).
+   * Enqueues a transactional auth email. Queue admission remains decoupled
+   * from the anti-enumeration response; the worker performs retry/fallback and
+   * records terminal delivery failure instead of silently completing a skip.
    */
   private async dispatchAuthEmail(payload: {
     to: string;
@@ -215,13 +235,31 @@ export class AuthService {
     body: string;
   }) {
     try {
-      await this.emailQueue?.add("send", payload);
+      if (!this.emailQueue) {
+        throw new Error("email queue is unavailable");
+      }
+      await this.emailQueue.add("send", payload, {
+        attempts: 5,
+        backoff: { type: "exponential", delay: 2_000 },
+        removeOnComplete: 500,
+        removeOnFail: 2_000,
+      });
       this.logger.log(`[email] "${payload.subject}" queued for ${payload.to}`);
     } catch (err) {
       this.logger.warn(
         `[email] queue unavailable, "${payload.subject}" for ${payload.to} not sent: ${err instanceof Error ? err.message : err}`,
       );
     }
+  }
+
+  /** Queue a security/account email through the identity delivery pipeline. */
+  async queueAccountEmail(payload: {
+    to: string;
+    tenantId: string;
+    subject: string;
+    body: string;
+  }): Promise<void> {
+    await this.dispatchAuthEmail(payload);
   }
 
   /**
@@ -245,7 +283,20 @@ export class AuthService {
   /**
    * Registers a new tenant along with its organization, default roles, and super admin user.
    */
-  async register(dto: RegisterInput) {
+  async register(
+    dto: RegisterInput | ExternalRegistrationInput,
+    context?: Pick<SessionContext, "ipAddress" | "userAgent">,
+  ) {
+    if (dto.termsAccepted !== true) {
+      throw new BadRequestException(
+        "You must accept the current Terms of Service and acknowledge the Privacy Policy.",
+      );
+    }
+    const legal = getRegistrationLegalConfig();
+    const legalAcceptedAt = new Date();
+    const externalIdentity =
+      "externalIdentity" in dto ? dto.externalIdentity : null;
+    const registrationPassword = "password" in dto ? dto.password : null;
     const baseSlug =
       dto.organizationName
         .toLowerCase()
@@ -291,6 +342,9 @@ export class AuthService {
       }
     };
 
+    let createdTenantId: string | null = null;
+    let registrationCommitted = false;
+
     try {
       await updateProgress(10, "Initializing setup...");
 
@@ -298,13 +352,16 @@ export class AuthService {
       // Check if the password has been exposed in known breaches (HIBP k-anonymity).
       // This is advisory during registration — we reject passwords seen >100 times
       // to prevent the most commonly-breached passwords from entering the system.
-      const breachCount = await checkPasswordBreach(dto.password);
-      if (breachCount > 100) {
-        throw new BadRequestException(
-          `This password has appeared in ${breachCount.toLocaleString()} known data breaches. Please choose a different password.`,
-        );
+      let hashedPassword: string | null = null;
+      if (registrationPassword) {
+        const breachCount = await checkPasswordBreach(registrationPassword);
+        if (breachCount > 100) {
+          throw new BadRequestException(
+            `This password has appeared in ${breachCount.toLocaleString()} known data breaches. Please choose a different password.`,
+          );
+        }
+        hashedPassword = await hashPassword(registrationPassword);
       }
-      const hashedPassword = await hashPassword(dto.password);
 
       // Run creation in a transaction
       const result = await idpPrisma.$transaction(async (tx) => {
@@ -324,9 +381,15 @@ export class AuthService {
               estimatedUsers: dto.estimatedUsers || null,
               logoUrl: dto.logoUrl || null,
               industry: dto.industry || null,
-              // Compliance record of consent — dto.termsAccepted is already
-              // required true by registerSchema; this is when, not whether.
-              termsAcceptedAt: new Date().toISOString(),
+              // Compatibility timestamp plus immutable document evidence. The
+              // versions come from server configuration, never browser fields.
+              termsAcceptedAt: legalAcceptedAt.toISOString(),
+              legalConsent: {
+                acceptedAt: legalAcceptedAt.toISOString(),
+                mechanism: "registration_checkbox",
+                terms: { ...legal.terms },
+                privacy: { ...legal.privacy },
+              },
               onboardingChecklist: {
                 profile: false,
                 logo: dto.logoUrl ? true : false,
@@ -338,6 +401,7 @@ export class AuthService {
             },
           },
         });
+        createdTenantId = tenant.id;
 
         // Registration is unauthenticated, so no tenant session exists yet and
         // the RLS session GUC is never set by the client extension. Set it
@@ -398,12 +462,25 @@ export class AuthService {
             tenantId: tenant.id,
             email: dto.email.toLowerCase(),
             passwordHash: hashedPassword,
-            passwordChangedAt: new Date(),
+            passwordChangedAt: externalIdentity ? null : new Date(),
+            emailVerifiedAt: externalIdentity ? new Date() : null,
             firstName: dto.firstName,
             lastName: dto.lastName,
             status: "ACTIVE",
           },
         });
+
+        if (externalIdentity) {
+          await tx.userIdentity.create({
+            data: {
+              tenantId: tenant.id,
+              userId: user.id,
+              provider: externalIdentity.provider,
+              subject: externalIdentity.subject,
+              email: user.email,
+            },
+          });
+        }
 
         await updateProgress(65, "Assigning administrative privileges...");
         // 4. Assign SUPER_ADMIN role to user
@@ -511,16 +588,19 @@ export class AuthService {
         );
         // 7. Mint the email verification token inside the same transaction (the
         // RLS GUC set above covers this insert too).
-        const { plain: verificationToken, hash: verificationHash } =
-          createResetToken();
-        await tx.emailVerificationToken.create({
-          data: {
-            userId: user.id,
-            tenantId: tenant.id,
-            tokenHash: verificationHash,
-            expiresAt: new Date(Date.now() + VERIFY_TOKEN_TTL_MS),
-          },
-        });
+        let verificationToken: string | undefined;
+        if (!externalIdentity) {
+          const verification = createResetToken();
+          verificationToken = verification.plain;
+          await tx.emailVerificationToken.create({
+            data: {
+              userId: user.id,
+              tenantId: tenant.id,
+              tokenHash: verification.hash,
+              expiresAt: new Date(Date.now() + VERIFY_TOKEN_TTL_MS),
+            },
+          });
+        }
 
         // 8. Start the 30-day full-feature evaluation as an explicit,
         // queryable subscription row (AUTH_BILLING_PROGRAM Phase 2.3) —
@@ -575,13 +655,19 @@ export class AuthService {
         };
       });
 
-      const verificationLink = `${this.appUrl}/verify-email?token=${result.verificationToken}`;
-      await this.dispatchAuthEmail({
-        to: result.user.email,
-        tenantId: result.tenant.id,
-        subject: "Verify your UniERP email address",
-        body: `Welcome to UniERP! Verify your email address to secure your new workspace: ${verificationLink}`,
-      });
+      registrationCommitted = true;
+
+      const verificationLink = result.verificationToken
+        ? `${this.appUrl}/verify-email?token=${result.verificationToken}`
+        : undefined;
+      if (verificationLink) {
+        await this.dispatchAuthEmail({
+          to: result.user.email,
+          tenantId: result.tenant.id,
+          subject: "Verify your UniERP email address",
+          body: `Welcome to UniERP! Verify your email address to secure your new workspace: ${verificationLink}`,
+        });
+      }
 
       // Phase 5: new tenants start with zero auto-installed apps (only kernel
       // apps App Store + SaaS Portal are visible by default). The event fires
@@ -608,6 +694,22 @@ export class AuthService {
           email: result.user.email,
           slug: result.tenant.slug,
         },
+        ipAddress: context?.ipAddress ?? undefined,
+      });
+
+      await emitAuthAudit({
+        tenantId: result.tenant.id,
+        userId: result.user.id,
+        action: "REGISTRATION_LEGAL_CONSENT_GRANTED",
+        entityType: "LegalConsent",
+        entityId: `${result.user.id}:${legal.terms.version}:${legal.privacy.version}`,
+        changes: {
+          acceptedAt: legalAcceptedAt.toISOString(),
+          mechanism: "registration_checkbox",
+          terms: legal.terms,
+          privacy: legal.privacy,
+        },
+        ipAddress: context?.ipAddress ?? undefined,
       });
 
       const { verificationToken: _token, ...publicResult } = result;
@@ -615,8 +717,32 @@ export class AuthService {
         return publicResult;
       }
       // Local-dev ergonomics only — mirrors forgotPassword's developer link.
-      return { ...publicResult, developerVerificationLink: verificationLink };
+      return verificationLink
+        ? { ...publicResult, developerVerificationLink: verificationLink }
+        : publicResult;
     } catch (err: any) {
+      // Tenant and business-schema records are written through the main
+      // Prisma client while identity records use the IdP client. Prisma cannot
+      // enlist two generated clients in one transaction, so compensate the
+      // newly-created tenant if the IdP transaction fails. Tenant-scoped rows
+      // use ON DELETE CASCADE; the id is generated for this attempt and cannot
+      // target a pre-existing customer. Never compensate after commit, even if
+      // a post-commit notification/progress hook fails.
+      if (createdTenantId && !registrationCommitted) {
+        try {
+          await prisma.tenant.deleteMany({
+            where: { id: createdTenantId },
+          });
+        } catch (cleanupError) {
+          this.logger.error(
+            `Registration compensation failed for tenant ${createdTenantId}: ${
+              cleanupError instanceof Error
+                ? cleanupError.message
+                : String(cleanupError)
+            }`,
+          );
+        }
+      }
       await updateProgress(0, "Setup failed", "failed", err.message);
       throw err;
     }
@@ -1122,19 +1248,34 @@ export class AuthService {
       Array<{ id: string; tenant_id: string }>
     >`
       SELECT id, tenant_id FROM auth_lookup_user_tenants(${dto.email.toLowerCase()})
-      WHERE tenant_id = ${tenant.id}
     `;
 
-    if (users.length === 0) {
-      throw new UnauthorizedException("Invalid credentials");
+    // Provider authority is an explicit membership/role assignment. It is not
+    // inferred from an email or from the tenant that first created the current
+    // compatibility user row.
+    for (const candidate of users) {
+      const authorization = await this.resolveRolesAndPermissions(
+        candidate.id,
+        candidate.tenant_id,
+      );
+      const providerRole = authorization.roles.some((role) =>
+        PROVIDER_LOGIN_ROLES.has(role),
+      );
+      const concreteProviderPermission = authorization.permissions.some(
+        (permission) =>
+          permission.startsWith("system.") || permission.startsWith("platform."),
+      );
+      if (providerRole && concreteProviderPermission) {
+        return this.authenticateInternal(
+          candidate.tenant_id,
+          dto,
+          context,
+          "provider",
+        );
+      }
     }
 
-    return this.authenticateInternal(
-      tenant.id,
-      dto,
-      context,
-      "provider"
-    );
+    throw new UnauthorizedException("Invalid credentials");
   }
 
   private async authenticateInternal(
@@ -1463,11 +1604,12 @@ export class AuthService {
    */
   async updateProfile(
     userId: string,
+    tenantId: string,
     dto: import("@kannan19302/shared").UpdateProfileInput,
   ) {
-    const user = await idpPrisma.user.findUnique({
-      where: { id: userId },
-    });
+    const user = await runWithTenantSession({ tenantId, userId }, () =>
+      idpPrisma.user.findUnique({ where: { id: userId } }),
+    );
 
     if (!user) {
       throw new NotFoundException("User not found");
@@ -1508,10 +1650,12 @@ export class AuthService {
       updateData.preferences = { ...currentPrefs, ...dto.preferences };
     }
 
-    const updatedUser = await idpPrisma.user.update({
-      where: { id: userId },
-      data: updateData,
-    });
+    const updatedUser = await runWithTenantSession({ tenantId, userId }, () =>
+      idpPrisma.user.update({
+        where: { id: userId },
+        data: updateData,
+      }),
+    );
 
     if (dto.newPassword) {
       await emitAuthAudit({

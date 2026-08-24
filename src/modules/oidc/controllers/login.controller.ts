@@ -7,12 +7,25 @@ import {
   Req,
   Res,
   Header,
+  Optional,
+  UseGuards,
 } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { ApiExcludeController } from "@nestjs/swagger";
 import { AuthService } from "../../auth/auth.service";
-import { idpPrisma } from "@kannan19302/database";
+import {
+  OAuthService,
+  type OAuthProviderName,
+} from "../../auth/oauth.service";
+import { idpPrisma, runWithTenantSession } from "@kannan19302/database";
+import { JwtAuthGuard } from "../../../common/guards/jwt-auth.guard";
+import { getRegistrationLegalConfig } from "../../../common/legal/legal-document.config";
+import { getPlatformNavigationConfig } from "../../../common/navigation/platform-navigation.config";
+import {
+  AccountGovernanceService,
+  type AccountOrganization,
+} from "../../auth/account-governance.service";
 
 const AUTH_COOKIE = "auth_token";
 const REFRESH_COOKIE = "refresh_token";
@@ -42,7 +55,7 @@ function getOrSetCsrf(req: Request, res: Response): string {
 /**
  * Constant-time verification of submitted CSRF token against the request cookie.
  */
-function verifyCsrf(req: Request, submittedToken?: string): boolean {
+export function verifyCsrf(req: Request, submittedToken?: string): boolean {
   const cookieHeader = req.headers?.cookie || "";
   const cookieMatch = cookieHeader.match(/(?:^|;\s*)oidc_csrf=([^;]+)/);
   const cookieToken =
@@ -60,13 +73,280 @@ function verifyCsrf(req: Request, submittedToken?: string): boolean {
 /**
  * The unified, enterprise-grade hosted OIDC auth portal.
  *
- * Light Mode First with ultra-premium UX, responsive split layout,
- * social SSO, interactive human puzzle verification, CSRF security, and multi-modal MFA.
+ * Responsive, theme-aware UX with social SSO, accessible risk controls,
+ * CSRF security, explicit tenant/provider scope, and multi-modal MFA.
  */
 @ApiExcludeController()
 @Controller("oidc")
 export class LoginController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly oauth: OAuthService,
+    @Optional() private readonly governance?: AccountGovernanceService,
+  ) {}
+
+  private async configuredProviders(
+    journey: "login" | "register",
+  ): Promise<OAuthProviderName[]> {
+    try {
+      return (await this.oauth.listProviders(journey)).providers;
+    } catch {
+      return [];
+    }
+  }
+
+  // ── 0. CENTRAL ACCOUNT CENTER ─────────────────────────────────────────
+
+  @Get("account")
+  @Header("Cache-Control", "no-store")
+  @UseGuards(JwtAuthGuard)
+  async accountCenter(
+    @Req()
+    req: Request & {
+      user?: {
+        userId?: string;
+        tenantId?: string;
+        sid?: string;
+        email?: string;
+        name?: string;
+      };
+    },
+    @Res({ passthrough: true }) res: Response,
+    @Query("error") error?: string,
+    @Query("success") success?: string,
+  ): Promise<string> {
+    const userId = req.user?.userId || "";
+    const tenantId = req.user?.tenantId || "";
+    const csrfToken = getOrSetCsrf(req, res);
+    const [configured, connected, account, organizations, privacy] = await Promise.all([
+      this.configuredProviders("login"),
+      this.oauth.getConnectedProviders(userId, tenantId),
+      runWithTenantSession({ tenantId, userId }, async () => {
+        const [user, sessions, passkeys, contacts] = await Promise.all([
+          idpPrisma.user.findUnique({
+            where: { id: userId },
+            select: {
+              firstName: true,
+              lastName: true,
+              email: true,
+              avatar: true,
+              preferences: true,
+              mfaEnabled: true,
+              emailVerifiedAt: true,
+            },
+          }),
+          idpPrisma.userSession.findMany({
+            where: { userId, isActive: true },
+            orderBy: { lastActivityAt: "desc" },
+            take: 20,
+            select: {
+              id: true,
+              device: true,
+              browser: true,
+              location: true,
+              platform: true,
+              lastActivityAt: true,
+              expiresAt: true,
+            },
+          }),
+          idpPrisma.passkey.findMany({
+            where: { userId },
+            orderBy: { createdAt: "desc" },
+            select: {
+              id: true,
+              name: true,
+              deviceType: true,
+              backedUp: true,
+              createdAt: true,
+              lastUsedAt: true,
+            },
+          }),
+          idpPrisma.accountContact.findMany({
+            where: { userId },
+            orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+            select: {
+              id: true,
+              value: true,
+              label: true,
+              isPrimary: true,
+              verifiedAt: true,
+              createdAt: true,
+            },
+          }),
+        ]);
+        return { user, sessions, passkeys, contacts };
+      }),
+      this.governance?.listOrganizations(userId, tenantId).catch(() => []) ?? [],
+      this.governance?.privacyState(userId, tenantId).catch(() => ({ exports: [], erasures: [] })) ?? {
+        exports: [],
+        erasures: [],
+      },
+    ]);
+    return renderAccountCenter({
+      configured,
+      connected,
+      email: account.user?.email ?? req.user?.email,
+      firstName: account.user?.firstName,
+      lastName: account.user?.lastName,
+      avatar: account.user?.avatar,
+      preferences: account.user?.preferences,
+      mfaEnabled: account.user?.mfaEnabled ?? false,
+      emailVerified: !!account.user?.emailVerifiedAt,
+      sessions: account.sessions.map((session) => ({
+        ...session,
+        current: session.id === req.user?.sid,
+      })),
+      passkeys: account.passkeys,
+      contacts: account.contacts,
+      organizations,
+      privacy,
+      csrfToken,
+      error,
+      success,
+    });
+  }
+
+  @Post("account/profile")
+  @Header("Cache-Control", "no-store")
+  @UseGuards(JwtAuthGuard)
+  async updateAccountProfile(
+    @Body() body: Record<string, string>,
+    @Req() req: Request & { user?: { userId?: string; tenantId?: string } },
+    @Res() res: Response,
+  ): Promise<void> {
+    if (!verifyCsrf(req, body._csrf)) {
+      res.redirect(302, "/oidc/account?error=Invalid%20or%20expired%20security%20token.");
+      return;
+    }
+    const userId = req.user?.userId;
+    const tenantId = req.user?.tenantId;
+    const firstName = body.first_name?.trim();
+    const lastName = body.last_name?.trim();
+    if (!userId || !tenantId || !firstName || !lastName || firstName.length > 80 || lastName.length > 80) {
+      res.redirect(302, "/oidc/account?error=Enter%20a%20valid%20first%20and%20last%20name.");
+      return;
+    }
+    await runWithTenantSession({ tenantId, userId }, () =>
+      idpPrisma.user.update({
+        where: { id: userId },
+        data: { firstName, lastName },
+      }),
+    );
+    res.redirect(302, "/oidc/account?success=Profile%20updated.#profile");
+  }
+
+  @Post("account/preferences")
+  @Header("Cache-Control", "no-store")
+  @UseGuards(JwtAuthGuard)
+  async updateAccountPreferences(
+    @Body() body: Record<string, string>,
+    @Req() req: Request & { user?: { userId?: string; tenantId?: string } },
+    @Res() res: Response,
+  ): Promise<void> {
+    if (!verifyCsrf(req, body._csrf)) {
+      res.redirect(302, "/oidc/account?error=Invalid%20or%20expired%20security%20token.");
+      return;
+    }
+    const userId = req.user?.userId;
+    const tenantId = req.user?.tenantId;
+    const allowedThemes = new Set(["system", "light", "dark", "enterprise", "modern", "minimal", "classic", "high-contrast"]);
+    const allowedDensities = new Set(["comfortable", "compact"]);
+    const theme = body.theme && allowedThemes.has(body.theme) ? body.theme : "system";
+    const density = body.density && allowedDensities.has(body.density) ? body.density : "comfortable";
+    if (!userId || !tenantId) {
+      res.redirect(302, "/oidc/account?error=Invalid%20account%20request.");
+      return;
+    }
+    await runWithTenantSession({ tenantId, userId }, async () => {
+      const user = await idpPrisma.user.findUnique({
+        where: { id: userId },
+        select: { preferences: true },
+      });
+      const current = user?.preferences && typeof user.preferences === "object" && !Array.isArray(user.preferences)
+        ? user.preferences as Record<string, unknown>
+        : {};
+      await idpPrisma.user.update({
+        where: { id: userId },
+        data: {
+          preferences: {
+            ...current,
+            theme,
+            density,
+            reduceMotion: body.reduce_motion === "on",
+          },
+        },
+      });
+    });
+    res.cookie("unierp_theme", theme, { sameSite: "lax", path: "/", maxAge: 365 * 24 * 60 * 60 * 1000 });
+    res.redirect(302, "/oidc/account?success=Preferences%20saved.#appearance");
+  }
+
+  @Post("account/sessions/revoke")
+  @Header("Cache-Control", "no-store")
+  @UseGuards(JwtAuthGuard)
+  async revokeAccountSession(
+    @Body() body: Record<string, string>,
+    @Req() req: Request & { user?: { userId?: string; tenantId?: string; sid?: string } },
+    @Res() res: Response,
+  ): Promise<void> {
+    if (!verifyCsrf(req, body._csrf)) {
+      res.redirect(302, "/oidc/account?error=Invalid%20or%20expired%20security%20token.");
+      return;
+    }
+    const userId = req.user?.userId;
+    const tenantId = req.user?.tenantId;
+    const sessionId = body.session_id;
+    if (!userId || !tenantId || !sessionId || sessionId === req.user?.sid) {
+      res.redirect(302, "/oidc/account?error=The%20current%20session%20cannot%20be%20revoked%20here.");
+      return;
+    }
+    await runWithTenantSession({ tenantId, userId }, () =>
+      idpPrisma.userSession.updateMany({
+        where: { id: sessionId, userId },
+        data: { isActive: false },
+      }),
+    );
+    res.redirect(302, "/oidc/account?success=Session%20revoked.#sessions");
+  }
+
+  @Post("account/unlink")
+  @Header("Cache-Control", "no-store")
+  @UseGuards(JwtAuthGuard)
+  async unlinkExternalAccount(
+    @Body() body: Record<string, string>,
+    @Req()
+    req: Request & {
+      user?: { userId?: string; tenantId?: string; sid?: string };
+    },
+    @Res() res: Response,
+  ): Promise<void> {
+    if (!verifyCsrf(req, body._csrf)) {
+      res.redirect(
+        302,
+        "/oidc/account?error=Invalid%20or%20expired%20security%20token.",
+      );
+      return;
+    }
+    const provider = parseOAuthProvider(body.provider);
+    const userId = req.user?.userId;
+    const tenantId = req.user?.tenantId;
+    const sid = req.user?.sid;
+    if (!provider || !userId || !tenantId || !sid) {
+      res.redirect(302, "/oidc/account?error=Invalid%20account%20request.");
+      return;
+    }
+    try {
+      await this.oauth.unlinkProvider(provider, userId, tenantId, sid);
+      res.redirect(
+        302,
+        `/oidc/account?success=${encodeURIComponent(`${providerLabel(provider)} disconnected.`)}`,
+      );
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Provider could not be disconnected.";
+      res.redirect(302, `/oidc/account?error=${encodeURIComponent(message)}`);
+    }
+  }
 
   /**
    * Whether this login attempt is for an INTERNAL platform (Provider Admin OS, P2),
@@ -98,19 +378,23 @@ export class LoginController {
 
   @Get("login")
   @Header("Cache-Control", "no-store")
-  loginForm(
+  async loginForm(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
     @Query("return_to") returnTo?: string,
     @Query("error") error?: string,
     @Query("success") success?: string,
-  ): string {
+  ): Promise<string> {
     const csrfToken = getOrSetCsrf(req, res);
+    const safeReturn = safeReturnTo(returnTo);
     return renderLogin({
-      returnTo: safeReturnTo(returnTo),
+      returnTo: safeReturn,
       error,
       success,
       csrfToken,
+      providers: (await this.isInternalPlatformLogin(safeReturn))
+        ? []
+        : await this.configuredProviders("login"),
     });
   }
 
@@ -123,6 +407,10 @@ export class LoginController {
   ): Promise<void> {
     const returnTo = safeReturnTo(body.return_to);
     const csrfToken = getOrSetCsrf(req, res);
+    const requestedProviderRealm = body.login_scope === "provider";
+    const providers = (requestedProviderRealm || await this.isInternalPlatformLogin(returnTo))
+      ? []
+      : await this.configuredProviders("login");
 
     // CSRF verification
     if (!verifyCsrf(req, body._csrf)) {
@@ -131,6 +419,7 @@ export class LoginController {
           returnTo,
           error: "Invalid or expired security token. Please try again.",
           csrfToken,
+          providers,
         }),
       );
       return;
@@ -143,13 +432,14 @@ export class LoginController {
           returnTo,
           error: "Automated verification failed. Please try again.",
           csrfToken,
+          providers,
         }),
       );
       return;
     }
 
     try {
-      const isProviderLogin = await this.isInternalPlatformLogin(returnTo);
+      const isProviderLogin = requestedProviderRealm || await this.isInternalPlatformLogin(returnTo);
       const result = (await (isProviderLogin
         ? this.auth.providerLogin(
             { email: body.email, password: body.password } as never,
@@ -160,6 +450,7 @@ export class LoginController {
               email: body.email,
               password: body.password,
               rememberMe: body.remember === "on",
+              tenantSlug: body.tenant_slug?.trim() || undefined,
             } as never,
             {
               ipAddress: req.ip || req.socket.remoteAddress,
@@ -190,6 +481,7 @@ export class LoginController {
           error: message,
           email: body.email,
           csrfToken,
+          providers,
         }),
       );
     }
@@ -262,17 +554,34 @@ export class LoginController {
 
   @Get("register")
   @Header("Cache-Control", "no-store")
-  registerForm(
+  async registerForm(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
     @Query("return_to") returnTo?: string,
     @Query("error") error?: string,
-  ): string {
+    @Query("external_auth") externalAuth?: string,
+  ): Promise<string> {
     const csrfToken = getOrSetCsrf(req, res);
+    const externalProfile = externalAuth
+      ? await this.oauth.getRegistrationProfile(externalAuth)
+      : null;
     return renderRegister({
-      returnTo: safeReturnTo(returnTo),
-      error,
+      returnTo: safeReturnTo(externalProfile?.returnTo || returnTo),
+      error:
+        externalAuth && !externalProfile
+          ? "External registration expired. Please choose your provider again."
+          : error,
       csrfToken,
+      providers: await this.configuredProviders("register"),
+      externalAuth: externalProfile ? externalAuth : undefined,
+      externalProvider: externalProfile?.provider,
+      values: externalProfile
+        ? {
+            email: externalProfile.email,
+            first_name: externalProfile.firstName || "",
+            last_name: externalProfile.lastName || "",
+          }
+        : undefined,
     });
   }
 
@@ -285,6 +594,7 @@ export class LoginController {
   ): Promise<void> {
     const returnTo = safeReturnTo(body.return_to);
     const csrfToken = getOrSetCsrf(req, res);
+    const providers = await this.configuredProviders("register");
 
     if (!verifyCsrf(req, body._csrf)) {
       res.status(403).send(
@@ -293,6 +603,8 @@ export class LoginController {
           error: "Invalid or expired security token. Please try again.",
           values: body,
           csrfToken,
+          providers,
+          externalAuth: body.external_auth,
         }),
       );
       return;
@@ -306,6 +618,8 @@ export class LoginController {
           error: "Automated verification failed. Please try again.",
           values: body,
           csrfToken,
+          providers,
+          externalAuth: body.external_auth,
         }),
       );
       return;
@@ -318,21 +632,48 @@ export class LoginController {
           error: "You must accept the Terms of Service to continue.",
           values: body,
           csrfToken,
+          providers,
+          externalAuth: body.external_auth,
         }),
       );
       return;
     }
 
     try {
-      await this.auth.register({
-        organizationName: body.organization_name ?? "",
-        firstName: body.first_name ?? "",
-        lastName: body.last_name ?? "",
-        email: body.email ?? "",
-        password: body.password ?? "",
-        confirmPassword: body.confirm_password ?? body.password ?? "",
-        termsAccepted: true,
-      });
+      if (body.external_auth) {
+        const result = await this.oauth.completeExternalRegistration(
+          body.external_auth,
+          {
+            organizationName: body.organization_name ?? "",
+            firstName: body.first_name,
+            lastName: body.last_name,
+            termsAccepted: true,
+          },
+          {
+            ipAddress: req.ip || req.socket.remoteAddress,
+            userAgent: req.headers["user-agent"],
+          },
+        );
+        this.setAuthCookies(res, result);
+        res.redirect(302, result.returnTo || returnTo);
+        return;
+      }
+
+      await this.auth.register(
+        {
+          organizationName: body.organization_name ?? "",
+          firstName: body.first_name ?? "",
+          lastName: body.last_name ?? "",
+          email: body.email ?? "",
+          password: body.password ?? "",
+          confirmPassword: body.confirm_password ?? body.password ?? "",
+          termsAccepted: true,
+        },
+        {
+          ipAddress: req.ip || req.socket.remoteAddress,
+          userAgent: req.headers["user-agent"],
+        },
+      );
 
       // Auto-authenticate newly registered organization admin
       const result = (await this.auth.login(
@@ -357,6 +698,8 @@ export class LoginController {
           error: message,
           values: body,
           csrfToken,
+          providers,
+          externalAuth: body.external_auth,
         }),
       );
     }
@@ -923,30 +1266,13 @@ const BASE_STYLES = `
     color: var(--text-secondary);
   }
 
-  /* Top Mode Switcher Pill */
-  .auth-switcher {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    background: var(--bg-pill);
-    padding: 4px;
-    border-radius: 10px;
-    margin-bottom: 24px;
-    border: 1px solid var(--border-subtle);
-  }
-  .auth-switcher-tab {
+  .auth-alternative {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: 0.875rem;
     text-align: center;
-    padding: 8px 12px;
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-decoration: none;
-    border-radius: 8px;
-    transition: all 0.15s ease;
-  }
-  .auth-switcher-tab.active {
-    background: var(--bg-pill-active);
-    color: var(--text-title);
-    box-shadow: var(--shadow-sm);
   }
 
   /* Social SSO Grid */
@@ -1104,6 +1430,19 @@ const BASE_STYLES = `
     color: var(--brand-primary-hover);
     text-decoration: underline;
   }
+  .skip-link {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 1000;
+    transform: translateY(-160%);
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-title);
+    box-shadow: var(--shadow-md);
+  }
+  .skip-link:focus { transform: translateY(0); }
 
   /* Human Verification Slider (Buzzle) */
   .slider-wall-box {
@@ -1299,9 +1638,72 @@ const BASE_STYLES = `
   }
 
   .hp-field { display: none !important; }
+
+  /* Unified Account Center */
+  .account-shell {
+    width: min(1180px, calc(100% - 32px));
+    margin: 28px auto 64px;
+    display: grid;
+    grid-template-columns: 250px minmax(0, 1fr);
+    gap: 28px;
+    align-items: start;
+  }
+  .account-rail {
+    position: sticky;
+    top: 84px;
+    display: grid;
+    gap: 20px;
+    padding: 20px;
+    border: 1px solid var(--border-card);
+    border-radius: 16px;
+    background: var(--bg-card);
+    box-shadow: var(--shadow-sm);
+  }
+  .account-person { display:flex;align-items:center;gap:12px;min-width:0; }
+  .account-person > span,.account-person > img { width:42px;height:42px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;object-fit:cover;background:var(--brand-accent);color:white;font-weight:700;flex:0 0 auto; }
+  .account-person div { min-width:0; }
+  .account-person strong,.account-person small { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+  .account-person small { color:var(--text-muted);margin-top:2px; }
+  .account-rail nav { display:grid;gap:3px; }
+  .account-rail nav a { padding:9px 10px;border-radius:8px;color:var(--text-secondary);font-size:.85rem;text-decoration:none; }
+  .account-rail nav a:hover,.account-rail nav a:focus-visible { background:var(--bg-pill);color:var(--text-title); }
+  .account-main { display:grid;gap:16px;min-width:0; }
+  .account-heading { padding:14px 4px 10px; }
+  .account-heading > span { color:var(--brand-accent);font-size:.72rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase; }
+  .account-heading h1 { margin:8px 0 6px;font-size:clamp(2rem,5vw,3.5rem);letter-spacing:-.05em;line-height:1; }
+  .account-heading p,.account-section p { color:var(--text-secondary); }
+  .account-section { scroll-margin-top:84px;padding:24px;border:1px solid var(--border-card);border-radius:16px;background:var(--bg-card);box-shadow:var(--shadow-sm); }
+  .account-section-head { display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px; }
+  .account-section-head h2 { margin:0 0 4px;font-size:1.05rem; }
+  .account-section-head p { margin:0;font-size:.825rem; }
+  .account-status { display:inline-flex;padding:3px 8px;border:1px solid var(--border-subtle);border-radius:999px;background:var(--bg-pill);color:var(--text-secondary);font-size:.7rem;font-weight:650;white-space:nowrap; }
+  .account-form-grid { display:grid;grid-template-columns:1fr 1fr;gap:16px; }
+  .account-form-grid label:not(.checkbox-label) { display:grid;gap:7px;color:var(--text-secondary);font-size:.8rem;font-weight:600; }
+  .account-span { grid-column:1 / -1; }
+  .account-save { width:auto;justify-self:start;padding-inline:24px; }
+  .account-row { display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 0;border-bottom:1px solid var(--border-subtle); }
+  .account-row:last-child { border-bottom:0; }
+  .account-muted { color:var(--text-muted);font-size:.78rem;margin-top:3px; }
+  .account-danger { border:1px solid color-mix(in srgb,#ef4444 35%,var(--border-subtle));border-radius:8px;background:transparent;color:#dc2626;padding:7px 11px;cursor:pointer; }
+  @media (max-width: 820px) {
+    .account-shell { grid-template-columns:1fr; }
+    .account-rail { position:static; }
+    .account-rail nav { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  }
+  @media (max-width: 520px) {
+    .account-shell { width:min(100% - 20px,1180px); }
+    .account-section { padding:18px; }
+    .account-form-grid { grid-template-columns:1fr; }
+    .account-span { grid-column:auto; }
+    .account-section-head,.account-row { align-items:flex-start;flex-direction:column; }
+  }
 `;
 
 function renderDocument(title: string, content: string): string {
+  const navigation = getPlatformNavigationConfig();
+  const documentContent = /<main[\s>]/i.test(content)
+    ? content
+    : `<main id="main-content">${content}</main>`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1314,7 +1716,8 @@ function renderDocument(title: string, content: string): string {
       const current = document.documentElement.getAttribute('data-theme') || 'light';
       const next = current === 'dark' ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', next);
-      localStorage.setItem('unierp_theme', next);
+      localStorage.setItem('unierp.theme', next);
+      document.cookie = 'unierp_theme=' + next + '; Path=/; Max-Age=31536000; SameSite=Lax';
       updateThemeIcon(next);
     }
     function updateThemeIcon(t) {
@@ -1322,29 +1725,30 @@ function renderDocument(title: string, content: string): string {
       if (el) el.textContent = t === 'dark' ? '☀️' : '🌙';
     }
     (function() {
-      const saved = localStorage.getItem('unierp_theme') || 'light';
+      const cookie = document.cookie.split('; ').find(function(entry){ return entry.indexOf('unierp_theme=') === 0; });
+      const saved = (cookie ? decodeURIComponent(cookie.split('=').slice(1).join('=')) : null) || localStorage.getItem('unierp.theme') || localStorage.getItem('unerp.theme') || 'light';
       document.documentElement.setAttribute('data-theme', saved);
     })();
   </script>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
   <div class="auth-top-bar">
-    <a href="http://localhost:4000" class="auth-brand-logo">
+    <a href="${escapeHtml(navigation.wizardUrl)}" class="auth-brand-logo">
       <div class="auth-brand-icon">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
-          <polyline points="2 17 12 22 22 17"></polyline>
-          <polyline points="2 12 12 17 22 12"></polyline>
+        <svg width="20" height="20" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <path d="M4 5.5 16 1l12 4.5v9.7c0 7.2-4.8 12.5-12 15.8C8.8 27.7 4 22.4 4 15.2V5.5Z" fill="currentColor"/>
+          <path d="M10 9v7.2c0 4 2.2 6.1 6 6.1s6-2.1 6-6.1V9h-3.7v7c0 2.1-.7 3.1-2.3 3.1s-2.3-1-2.3-3.1V9H10Z" fill="var(--bg-card)"/>
         </svg>
       </div>
       <span>UniERP</span>
     </a>
-    <button type="button" class="theme-toggle-btn" onclick="toggleTheme()" aria-label="Toggle theme">
+    <button type="button" id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle theme">
       <span id="theme-icon">🌙</span> Theme
     </button>
   </div>
 
-  ${content}
+  ${documentContent}
 
   <script>
     // Eye toggle function
@@ -1353,58 +1757,27 @@ function renderDocument(title: string, content: string): string {
       if (!input) return;
       const isPassword = input.type === 'password';
       input.type = isPassword ? 'text' : 'password';
+      btn.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
       btn.innerHTML = isPassword
         ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>'
         : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
     }
-
-    // Slider verification script
-    (function initSlider() {
-      const box = document.getElementById('slider-box');
-      const handle = document.getElementById('slider-handle');
-      const fill = document.getElementById('slider-fill');
-      const input = document.getElementById('slider-verified');
-      if (!box || !handle) return;
-
-      let isDragging = false;
-      let startX = 0;
-      const maxSlide = () => box.clientWidth - handle.clientWidth - 6;
-
-      function onStart(e) {
-        isDragging = true;
-        startX = (e.touches ? e.touches[0].clientX : e.clientX) - handle.offsetLeft;
-      }
-      function onMove(e) {
-        if (!isDragging) return;
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        let left = clientX - startX;
-        const max = maxSlide();
-        if (left < 3) left = 3;
-        if (left > max) left = max;
-        handle.style.left = left + 'px';
-        fill.style.width = left + 'px';
-
-        if (left >= max - 4) {
-          isDragging = false;
-          box.classList.add('verified');
-          document.getElementById('slider-text').textContent = '✓ Verified Human';
-          if (input) input.value = '1';
-        }
-      }
-      function onEnd() {
-        if (!isDragging) return;
-        isDragging = false;
-        handle.style.left = '3px';
-        fill.style.width = '0px';
-      }
-
-      handle.addEventListener('mousedown', onStart);
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onEnd);
-      handle.addEventListener('touchstart', onStart, { passive: true });
-      window.addEventListener('touchmove', onMove, { passive: true });
-      window.addEventListener('touchend', onEnd);
-    })();
+    var themeButton = document.getElementById('theme-toggle');
+    if (themeButton) themeButton.addEventListener('click', toggleTheme);
+    document.querySelectorAll('[data-password-target]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        togglePassword(button.getAttribute('data-password-target'), button);
+      });
+    });
+    var scopeSelect = document.getElementById('login-scope');
+    if (scopeSelect) scopeSelect.addEventListener('change', function () {
+      var group = document.getElementById('organization-slug-group');
+      if (group) group.hidden = scopeSelect.value === 'provider';
+    });
+    var strengthInput = document.querySelector('[data-password-strength]');
+    if (strengthInput) strengthInput.addEventListener('input', function () {
+      if (typeof checkPasswordStrength === 'function') checkPasswordStrength(strengthInput.value);
+    });
   </script>
 </body>
 </html>`;
@@ -1414,12 +1787,587 @@ function renderDocument(title: string, content: string): string {
 // 1. SIGN IN VIEW
 // ──────────────────────────────────────────────────────────────────────────
 
+function providerLabel(provider?: OAuthProviderName): string {
+  if (provider === "google") return "Google";
+  if (provider === "microsoft") return "Microsoft";
+  if (provider === "github") return "GitHub";
+  return "External";
+}
+
+function parseOAuthProvider(value?: string): OAuthProviderName | null {
+  if (value === "google" || value === "microsoft" || value === "github") {
+    return value;
+  }
+  return null;
+}
+
+function providerIcon(provider: OAuthProviderName): string {
+  if (provider === "google") {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.18-2.06H12v3.9h5.38a4.6 4.6 0 0 1-2 3.02v2.53h3.25c1.9-1.75 2.97-4.33 2.97-7.39Z"/><path fill="#34A853" d="M12 22c2.7 0 4.98-.9 6.63-2.38l-3.25-2.53c-.9.6-2.05.96-3.38.96-2.6 0-4.8-1.76-5.6-4.12H3.05v2.6A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.4 13.93A6 6 0 0 1 6.08 12c0-.67.12-1.32.32-1.93v-2.6H3.05A10 10 0 0 0 2 12c0 1.63.39 3.17 1.05 4.53l3.35-2.6Z"/><path fill="#EA4335" d="M12 5.95c1.47 0 2.79.5 3.83 1.5l2.87-2.88A9.63 9.63 0 0 0 12 2a10 10 0 0 0-8.95 5.47l3.35 2.6c.8-2.36 3-4.12 5.6-4.12Z"/></svg>';
+  }
+  if (provider === "microsoft") {
+    return '<svg viewBox="0 0 23 23" aria-hidden="true"><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M12 1h10v10H12z"/><path fill="#05a6f0" d="M1 12h10v10H1z"/><path fill="#ffba08" d="M12 12h10v10H12z"/></svg>';
+  }
+  return '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.88c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.03A9.6 9.6 0 0 1 12 6.8c.85 0 1.71.12 2.5.34 1.91-1.3 2.75-1.03 2.75-1.03.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.86v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg>';
+}
+
+function renderProviderButtons(
+  providers: OAuthProviderName[],
+  journey: "login" | "register",
+  returnTo: string,
+): string {
+  if (!providers.length) return "";
+  const returnToEnc = encodeURIComponent(returnTo);
+  return `<div class="social-grid" aria-label="Continue with an existing account">
+    ${providers
+      .map((provider) => {
+        const label = providerLabel(provider);
+        return `<a href="/api/v1/auth/oauth/${provider}/start?journey=${journey}&return_to=${returnToEnc}" class="social-btn" title="Continue with ${label}" aria-label="Continue with ${label}">
+          ${providerIcon(provider)}<span>${label}</span>
+        </a>`;
+      })
+      .join("")}
+  </div>`;
+}
+
+function renderAccountCenter(opts: {
+  configured: OAuthProviderName[];
+  connected: OAuthProviderName[];
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  avatar?: string | null;
+  preferences?: unknown;
+  mfaEnabled: boolean;
+  emailVerified: boolean;
+  sessions: Array<{
+    id: string;
+    device: string | null;
+    browser: string | null;
+    location: string | null;
+    platform: string | null;
+    lastActivityAt: Date;
+    expiresAt: Date | null;
+    current: boolean;
+  }>;
+  passkeys: Array<{
+    id: string;
+    name: string;
+    deviceType: string | null;
+    backedUp: boolean;
+    createdAt: Date;
+    lastUsedAt: Date | null;
+  }>;
+  contacts: Array<{
+    id: string;
+    value: string;
+    label: string;
+    isPrimary: boolean;
+    verifiedAt: Date | null;
+    createdAt: Date;
+  }>;
+  organizations: AccountOrganization[];
+  privacy: {
+    exports: Array<{
+      id: string;
+      status: string;
+      createdAt: Date;
+      completedAt: Date | null;
+      expiresAt: Date | null;
+    }>;
+    erasures: Array<{
+      id: string;
+      status: string;
+      createdAt: Date;
+      eligibleAt: Date | null;
+      cancelledAt: Date | null;
+      erasedAt: Date | null;
+    }>;
+  };
+  csrfToken: string;
+  error?: string;
+  success?: string;
+}): string {
+  const navigation = getPlatformNavigationConfig();
+  const preferences = opts.preferences && typeof opts.preferences === "object" && !Array.isArray(opts.preferences)
+    ? opts.preferences as Record<string, unknown>
+    : {};
+  const selectedTheme = typeof preferences.theme === "string" ? preferences.theme : "system";
+  const selectedDensity = typeof preferences.density === "string" ? preferences.density : "comfortable";
+  const reduceMotion = preferences.reduceMotion === true;
+  const initials = `${opts.firstName?.[0] ?? ""}${opts.lastName?.[0] ?? ""}`.toUpperCase() || "U";
+  const rows = (["google", "microsoft", "github"] as const)
+    .map((provider) => {
+      const label = providerLabel(provider);
+      const connected = opts.connected.includes(provider);
+      const available = opts.configured.includes(provider);
+      const action = connected
+        ? `<form method="POST" action="/oidc/account/unlink" style="margin:0">
+            <input type="hidden" name="_csrf" value="${escapeHtml(opts.csrfToken)}"/>
+            <input type="hidden" name="provider" value="${provider}"/>
+            <button type="submit" class="social-btn" style="width:auto">Disconnect</button>
+          </form>`
+        : available
+          ? `<a class="social-btn" style="width:auto" href="/api/v1/auth/oauth/${provider}/link?return_to=${encodeURIComponent("/oidc/account")}">Connect</a>`
+          : `<span style="color:var(--text-muted);font-size:.8125rem">Not configured</span>`;
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;border-bottom:1px solid var(--border-subtle)">
+        <div style="display:flex;align-items:center;gap:12px">
+          <span style="width:24px;height:24px;display:inline-flex">${providerIcon(provider)}</span>
+          <div><strong>${label}</strong><div style="color:var(--text-muted);font-size:.8125rem">${connected ? "Connected" : "Not connected"}</div></div>
+        </div>
+        ${action}
+      </div>`;
+    })
+    .join("");
+
+  const sessions = opts.sessions.map((session) => `<div class="account-row">
+    <div>
+      <strong>${escapeHtml(session.device || session.platform || "Web session")}${session.current ? ' <span class="account-status">Current</span>' : ""}</strong>
+      <div class="account-muted">${escapeHtml([session.browser, session.location].filter(Boolean).join(" · ") || "Unknown browser or location")}</div>
+      <div class="account-muted">Active ${escapeHtml(session.lastActivityAt.toISOString().replace("T", " ").slice(0, 16))} UTC</div>
+    </div>
+    ${session.current ? '<span class="account-muted">This device</span>' : `<form method="POST" action="/oidc/account/sessions/revoke">
+      <input type="hidden" name="_csrf" value="${escapeHtml(opts.csrfToken)}"/>
+      <input type="hidden" name="session_id" value="${escapeHtml(session.id)}"/>
+      <button type="submit" class="account-danger">Revoke</button>
+    </form>`}
+  </div>`).join("");
+
+  const passkeys = opts.passkeys.map((passkey) => `<div class="account-row">
+    <div>
+      <strong>${escapeHtml(passkey.name)}</strong>
+      <div class="account-muted">${passkey.deviceType === "multiDevice" ? "Synced passkey" : "Device-bound passkey"}${passkey.backedUp ? " · backed up" : ""}</div>
+      <div class="account-muted">Added ${escapeHtml(passkey.createdAt.toISOString().slice(0, 10))}${passkey.lastUsedAt ? ` · last used ${escapeHtml(passkey.lastUsedAt.toISOString().slice(0, 10))}` : ""}</div>
+    </div>
+    <button type="button" class="account-danger" data-passkey-delete="${escapeHtml(passkey.id)}">Remove</button>
+  </div>`).join("");
+
+  const contacts = opts.contacts.map((contact) => `<div class="account-row">
+    <div>
+      <strong>${escapeHtml(contact.label)}${contact.isPrimary ? ' <span class="account-status">Primary</span>' : ""}</strong>
+      <div class="account-muted">${escapeHtml(contact.value)}</div>
+      <div class="account-muted">${contact.verifiedAt ? `Verified ${escapeHtml(contact.verifiedAt.toISOString().slice(0, 10))}` : "Verification pending"}</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="account-status">${contact.verifiedAt ? "Verified" : "Pending"}</span>
+      ${!contact.isPrimary && !contact.verifiedAt ? `<button type="button" class="social-btn" style="width:auto" data-contact-resend="${escapeHtml(contact.id)}">Resend</button>` : ""}
+      ${!contact.isPrimary ? `<button type="button" class="account-danger" data-contact-remove="${escapeHtml(contact.id)}">Remove</button>` : ""}
+    </div>
+  </div>`).join("");
+
+  const organizations = opts.organizations.map((organization) => `<div class="account-row">
+    <div>
+      <strong>${escapeHtml(organization.tenant_name)}${organization.is_current ? ' <span class="account-status">Current</span>' : ""}</strong>
+      <div class="account-muted">${escapeHtml(organization.tenant_slug)}</div>
+    </div>
+    ${organization.is_current
+      ? '<span class="account-muted">Active workspace</span>'
+      : `<div style="display:flex;align-items:center;gap:8px"><button type="button" class="social-btn" style="width:auto" data-organization-switch="${escapeHtml(organization.tenant_id)}">Switch</button><button type="button" class="account-danger" data-organization-leave="${escapeHtml(organization.tenant_id)}" data-organization-name="${escapeHtml(organization.tenant_name)}">Leave</button></div>`}
+  </div>`).join("");
+  const pendingErasure = opts.privacy.erasures.find((request) => request.status === "PENDING");
+  const exportHistory = opts.privacy.exports.map((job) => `<div class="account-row">
+    <div><strong>Identity export</strong><div class="account-muted">Requested ${escapeHtml(job.createdAt.toISOString().slice(0, 10))} · ${escapeHtml(job.status.toLowerCase())}${job.expiresAt ? ` · expires ${escapeHtml(job.expiresAt.toISOString().slice(0, 10))}` : ""}</div></div>
+    <span class="account-status">${escapeHtml(job.status)}</span>
+  </div>`).join("");
+
+  const content = `<div class="account-shell">
+    <aside class="account-rail" aria-label="Account settings">
+      <div class="account-person">
+        ${opts.avatar ? `<img src="${escapeHtml(opts.avatar)}" alt=""/>` : `<span>${escapeHtml(initials)}</span>`}
+        <div><strong>${escapeHtml([opts.firstName, opts.lastName].filter(Boolean).join(" ") || "UniERP account")}</strong><small>${escapeHtml(opts.email || "")}</small></div>
+      </div>
+      <nav>
+        <a href="#profile">Profile</a><a href="#organizations">Organizations</a><a href="#security">Sign-in & security</a><a href="#sessions">Sessions & devices</a><a href="#connections">Connected accounts</a><a href="#appearance">Appearance & accessibility</a><a href="#notifications">Notifications</a><a href="#privacy">Privacy & data</a><a href="#billing">Plans & billing</a><a href="#support">Help & support</a>
+      </nav>
+      <a class="auth-link" href="${escapeHtml(navigation.wizardUrl)}">← Platform Wizard</a>
+    </aside>
+    <main class="account-main" id="main-content">
+      <header class="account-heading"><span>Unified settings</span><h1>Account Center</h1><p>One identity and preference center for every UniERP platform.</p></header>
+      ${opts.error ? `<div class="alert-banner alert-error"><span>⚠️ ${escapeHtml(opts.error)}</span></div>` : ""}
+      ${opts.success ? `<div class="alert-banner alert-success"><span>✓ ${escapeHtml(opts.success)}</span></div>` : ""}
+      <section id="profile" class="account-section"><div class="account-section-head"><div><h2>Profile</h2><p>Your name and identity across all workspaces.</p></div><span class="account-status">${opts.emailVerified ? "Verified email" : "Email pending"}</span></div>
+        <form method="POST" action="/oidc/account/profile" class="account-form-grid">
+          <input type="hidden" name="_csrf" value="${escapeHtml(opts.csrfToken)}"/>
+          <label>First name<input class="form-input" name="first_name" required maxlength="80" value="${escapeHtml(opts.firstName || "")}"/></label>
+          <label>Last name<input class="form-input" name="last_name" required maxlength="80" value="${escapeHtml(opts.lastName || "")}"/></label>
+          <label class="account-span">Email<input class="form-input" value="${escapeHtml(opts.email || "")}" readonly aria-describedby="email-help"/></label>
+          <small id="email-help" class="account-span account-muted">Email changes require a verified security flow and are never accepted by this profile form.</small>
+          <button class="btn-submit account-save" type="submit">Save profile</button>
+        </form>
+      </section>
+      <section id="organizations" class="account-section"><div class="account-section-head"><div><h2>Organizations</h2><p>Verified workspaces linked to this email identity. Access is re-evaluated after every switch.</p></div><span class="account-status">${opts.organizations.length} workspace${opts.organizations.length === 1 ? "" : "s"}</span></div>
+        <input type="hidden" id="account-governance-csrf" value="${escapeHtml(opts.csrfToken)}"/>
+        ${organizations || '<p class="account-muted">No verified organization membership is available.</p>'}
+        <p id="account-governance-status" class="account-muted" role="status" aria-live="polite"></p>
+      </section>
+      <section id="security" class="account-section"><div class="account-section-head"><div><h2>Sign-in & security</h2><p>Password, verification, and recovery controls.</p></div><span class="account-status">MFA ${opts.mfaEnabled ? "on" : "off"}</span></div>
+        <input type="hidden" id="account-passkey-csrf" value="${escapeHtml(opts.csrfToken)}"/>
+        <div class="account-section-head"><div><h3>Contact methods</h3><p>Verified recovery addresses can be used for security notices and future account recovery flows.</p></div><span class="account-status">${opts.contacts.length} contact${opts.contacts.length === 1 ? "" : "s"}</span></div>
+        ${contacts || `<div class="account-row"><div><strong>Primary email</strong><div class="account-muted">${escapeHtml(opts.email || "No email configured")}</div></div><span class="account-status">${opts.emailVerified ? "Verified" : "Pending"}</span></div>`}
+        <div class="account-form-grid" style="margin-top:16px">
+          <label>Label<input id="contact-label" class="form-input" maxlength="40" value="Recovery email" autocomplete="off"/></label>
+          <label>Recovery email<input id="contact-email" class="form-input" type="email" maxlength="254" autocomplete="email" placeholder="recovery@example.com"/></label>
+          <button id="add-account-contact" class="btn-submit account-save" type="button">Add recovery email</button>
+          <p id="account-contact-status" class="account-span account-muted" role="status" aria-live="polite"></p>
+        </div>
+        <div class="account-row"><div><strong>Password</strong><div class="account-muted">Use a recovery link to rotate your password securely.</div></div><a class="social-btn" href="/oidc/forgot-password">Change password</a></div>
+        <div class="account-row"><div><strong>Multi-factor authentication</strong><div class="account-muted">${opts.mfaEnabled ? "Your account requires a second factor." : "Add a second factor to protect privileged actions."}</div></div><a class="social-btn" href="${escapeHtml(navigation.mfaUrl)}">Manage MFA</a></div>
+        <div class="account-section-head" style="margin-top:20px"><div><h3>Passkeys and security keys</h3><p>Phishing-resistant sign-in protected by your device PIN, fingerprint, or face.</p></div><span class="account-status">${opts.passkeys.length} enrolled</span></div>
+        ${passkeys || '<p class="account-muted">No passkeys enrolled yet.</p>'}
+        <div class="account-form-grid" style="margin-top:16px">
+          <label class="account-span">Passkey name<input id="passkey-name" class="form-input" maxlength="60" value="My passkey"/></label>
+          <button id="add-passkey" class="btn-submit account-save" type="button">Add passkey</button>
+          <p id="passkey-account-status" class="account-span account-muted" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+      <section id="sessions" class="account-section"><div class="account-section-head"><div><h2>Sessions & devices</h2><p>Review and revoke active sign-ins.</p></div><span class="account-status">${opts.sessions.length} active</span></div>${sessions || '<p class="account-muted">No active sessions found.</p>'}</section>
+      <section id="connections" class="account-section"><div class="account-section-head"><div><h2>Connected accounts</h2><p>External identities you can use to sign in. Changes require a recent sign-in.</p></div></div>${rows}</section>
+      <section id="appearance" class="account-section"><div class="account-section-head"><div><h2>Appearance & accessibility</h2><p>Light/dark is always available in navigation; advanced preferences live here.</p></div></div>
+        <form method="POST" action="/oidc/account/preferences" class="account-form-grid">
+          <input type="hidden" name="_csrf" value="${escapeHtml(opts.csrfToken)}"/>
+          <label>Theme<select class="form-input" name="theme">${["system","light","dark","enterprise","modern","minimal","classic","high-contrast"].map((theme) => `<option value="${theme}"${selectedTheme === theme ? " selected" : ""}>${theme.replace("-", " ")}</option>`).join("")}</select></label>
+          <label>Density<select class="form-input" name="density"><option value="comfortable"${selectedDensity === "comfortable" ? " selected" : ""}>Comfortable</option><option value="compact"${selectedDensity === "compact" ? " selected" : ""}>Compact</option></select></label>
+          <label class="checkbox-label account-span"><input type="checkbox" name="reduce_motion"${reduceMotion ? " checked" : ""}/><span>Reduce non-essential motion</span></label>
+          <button class="btn-submit account-save" type="submit">Save preferences</button>
+        </form>
+      </section>
+      <section id="notifications" class="account-section"><div class="account-section-head"><div><h2>Notifications</h2><p>Control email, browser, mobile, and in-product delivery.</p></div><a class="social-btn" href="${escapeHtml(navigation.notificationPreferencesUrl)}">Open preferences</a></div></section>
+      <section id="privacy" class="account-section"><div class="account-section-head"><div><h2>Privacy & data</h2><p>Export your identity data or request governed account deletion with a 14-day cooling-off period and legal-hold review.</p></div><a class="social-btn" href="${escapeHtml(navigation.privacyCenterUrl)}">Privacy policy</a></div>
+        ${exportHistory}
+        <div class="account-row"><div><strong>Portable identity export</strong><div class="account-muted">Downloads a JSON package of your profile, roles, connected identities, sessions, preferences, and passkey metadata. Secrets and credential public keys are excluded.</div></div><button id="privacy-export" type="button" class="social-btn" style="width:auto">Download export</button></div>
+        ${pendingErasure
+          ? `<div class="account-row"><div><strong>Deletion requested</strong><div class="account-muted">Eligible after ${escapeHtml((pendingErasure.eligibleAt || pendingErasure.createdAt).toISOString().slice(0, 10))}; execution remains subject to legal holds and retention obligations.</div></div><button type="button" class="account-danger" data-deletion-cancel="${escapeHtml(pendingErasure.id)}">Cancel request</button></div>`
+          : `<div class="account-form-grid" style="margin-top:16px"><label class="account-span">Deletion reason (optional)<textarea id="deletion-reason" class="form-input" maxlength="500" rows="3"></textarea></label><button id="deletion-request" type="button" class="account-danger account-save">Request account deletion</button></div>`}
+        <p id="privacy-status" class="account-muted" role="status" aria-live="polite"></p>
+      </section>
+      <section id="billing" class="account-section"><div class="account-section-head"><div><h2>Plans & billing</h2><p>Trial status, invoices, payment methods, and plan changes for your organization.</p></div><a class="social-btn" href="${escapeHtml(navigation.billingPortalUrl)}">Billing portal</a></div></section>
+      <section id="support" class="account-section"><div class="account-section-head"><div><h2>Help & support</h2><p>Open a support request with the current organization, environment, platform, and policy decision context attached.</p></div><a class="social-btn" href="${escapeHtml(navigation.supportUrl)}">Contact support</a></div></section>
+    </main>
+  </div>${renderPasskeyClientScript("account")}${renderAccountGovernanceClientScript()}`;
+  return renderDocument("Account Center", content);
+}
+
+function renderAccountGovernanceClientScript(): string {
+  return `<script>
+  (function () {
+    var csrfNode = document.getElementById('account-governance-csrf');
+    if (!csrfNode) return;
+    var csrf = csrfNode.value;
+    var governanceStatus = document.getElementById('account-governance-status');
+    var contactStatus = document.getElementById('account-contact-status');
+    var privacyStatus = document.getElementById('privacy-status');
+    function status(node, message, error) {
+      if (!node) return;
+      node.textContent = message;
+      node.style.color = error ? 'var(--error-text)' : 'var(--text-muted)';
+    }
+    async function post(path, body) {
+      var response = await fetch(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(Object.assign({ _csrf: csrf }, body || {}))
+      });
+      var payload = await response.json().catch(function () { return {}; });
+      if (!response.ok) throw new Error(payload.message || 'The account action could not be completed.');
+      return payload;
+    }
+    document.querySelectorAll('[data-organization-switch]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        try {
+          button.disabled = true;
+          status(governanceStatus, 'Switching organization…', false);
+          var result = await post('/oidc/account/governance/organization/switch', {
+            targetTenantId: button.getAttribute('data-organization-switch')
+          });
+          window.location.assign(result.returnTo || '/oidc/account');
+        } catch (error) {
+          button.disabled = false;
+          status(governanceStatus, error.message, true);
+        }
+      });
+    });
+    document.querySelectorAll('[data-organization-leave]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        var name = button.getAttribute('data-organization-name') || 'this organization';
+        if (!window.confirm('Leave ' + name + '? Your membership and its active sessions will be disabled. This does not delete organization records.')) return;
+        try {
+          button.disabled = true;
+          status(governanceStatus, 'Removing the organization membership…', false);
+          await post('/oidc/account/governance/organization/leave', {
+            targetTenantId: button.getAttribute('data-organization-leave')
+          });
+          window.location.reload();
+        } catch (error) {
+          button.disabled = false;
+          status(governanceStatus, error.message, true);
+        }
+      });
+    });
+    var addContactButton = document.getElementById('add-account-contact');
+    if (addContactButton) addContactButton.addEventListener('click', async function () {
+      var email = (document.getElementById('contact-email') || {}).value || '';
+      var label = (document.getElementById('contact-label') || {}).value || '';
+      if (!email) {
+        status(contactStatus, 'Enter a recovery email address.', true);
+        return;
+      }
+      try {
+        addContactButton.disabled = true;
+        status(contactStatus, 'Adding the address and sending a verification link…', false);
+        await post('/oidc/account/contact/add', { email: email, label: label });
+        window.location.reload();
+      } catch (error) {
+        addContactButton.disabled = false;
+        status(contactStatus, error.message, true);
+      }
+    });
+    document.querySelectorAll('[data-contact-resend]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        try {
+          button.disabled = true;
+          status(contactStatus, 'Sending a fresh verification link…', false);
+          await post('/oidc/account/contact/resend', { contactId: button.getAttribute('data-contact-resend') });
+          status(contactStatus, 'Verification email sent. The new link expires in 30 minutes.', false);
+        } catch (error) {
+          button.disabled = false;
+          status(contactStatus, error.message, true);
+        }
+      });
+    });
+    document.querySelectorAll('[data-contact-remove]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        if (!window.confirm('Remove this recovery email from your account?')) return;
+        try {
+          button.disabled = true;
+          await post('/oidc/account/contact/remove', { contactId: button.getAttribute('data-contact-remove') });
+          window.location.reload();
+        } catch (error) {
+          button.disabled = false;
+          status(contactStatus, error.message, true);
+        }
+      });
+    });
+    var exportButton = document.getElementById('privacy-export');
+    if (exportButton) exportButton.addEventListener('click', async function () {
+      try {
+        exportButton.disabled = true;
+        status(privacyStatus, 'Preparing your identity export…', false);
+        var result = await post('/oidc/account/governance/privacy/export');
+        var blob = new Blob([JSON.stringify(result.data, null, 2)], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var link = document.createElement('a');
+        link.href = url;
+        link.download = 'unierp-identity-export-' + result.jobId + '.json';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        status(privacyStatus, 'Export downloaded. The request record expires in seven days.', false);
+      } catch (error) {
+        status(privacyStatus, error.message, true);
+      } finally {
+        exportButton.disabled = false;
+      }
+    });
+    var deletionButton = document.getElementById('deletion-request');
+    if (deletionButton) deletionButton.addEventListener('click', async function () {
+      if (!window.confirm('Request deletion of this account after the 14-day cooling-off period? Organization ownership and legal holds will be checked before execution.')) return;
+      try {
+        deletionButton.disabled = true;
+        status(privacyStatus, 'Recording your deletion request…', false);
+        await post('/oidc/account/governance/privacy/deletion/request', {
+          reason: (document.getElementById('deletion-reason') || {}).value || ''
+        });
+        window.location.reload();
+      } catch (error) {
+        deletionButton.disabled = false;
+        status(privacyStatus, error.message, true);
+      }
+    });
+    document.querySelectorAll('[data-deletion-cancel]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        if (!window.confirm('Cancel this pending account-deletion request?')) return;
+        try {
+          button.disabled = true;
+          await post('/oidc/account/governance/privacy/deletion/cancel', {
+            requestId: button.getAttribute('data-deletion-cancel')
+          });
+          window.location.reload();
+        } catch (error) {
+          button.disabled = false;
+          status(privacyStatus, error.message, true);
+        }
+      });
+    });
+  })();
+  </script>`;
+}
+
+function renderPasskeyClientScript(mode: "login" | "account"): string {
+  const modeScript = mode === "login"
+    ? `
+      var loginButton = document.getElementById('passkey-login');
+      if (loginButton) loginButton.addEventListener('click', async function () {
+        var status = document.getElementById('passkey-login-status');
+        try {
+          ensureWebAuthn();
+          loginButton.disabled = true;
+          setStatus(status, 'Waiting for your passkey…');
+          var csrf = document.getElementById('passkey-login-csrf').value;
+          var returnTo = document.getElementById('passkey-return-to').value;
+          var start = await postJson('/oidc/passkeys/authentication/options', { _csrf: csrf, returnTo: returnTo });
+          var publicKey = requestOptions(start.options);
+          var credential = await navigator.credentials.get({ publicKey: publicKey });
+          var assertion = authenticationResponse(credential);
+          var result = await postJson('/oidc/passkeys/authentication/verify', {
+            _csrf: csrf, handle: start.handle, response: assertion
+          });
+          setStatus(status, 'Passkey verified. Redirecting…');
+          window.location.assign(result.returnTo || '/');
+        } catch (error) {
+          setStatus(status, friendlyPasskeyError(error));
+          loginButton.disabled = false;
+        }
+      });`
+    : `
+      var addButton = document.getElementById('add-passkey');
+      if (addButton) addButton.addEventListener('click', async function () {
+        var status = document.getElementById('passkey-account-status');
+        try {
+          ensureWebAuthn();
+          addButton.disabled = true;
+          setStatus(status, 'Waiting for your authenticator…');
+          var csrf = document.getElementById('account-passkey-csrf').value;
+          var start = await postJson('/oidc/passkeys/registration/options', { _csrf: csrf });
+          var publicKey = creationOptions(start.options);
+          var credential = await navigator.credentials.create({ publicKey: publicKey });
+          await postJson('/oidc/passkeys/registration/verify', {
+            _csrf: csrf,
+            handle: start.handle,
+            name: document.getElementById('passkey-name').value,
+            response: registrationResponse(credential)
+          });
+          setStatus(status, 'Passkey added. Refreshing…');
+          window.location.reload();
+        } catch (error) {
+          setStatus(status, friendlyPasskeyError(error));
+          addButton.disabled = false;
+        }
+      });
+      document.querySelectorAll('[data-passkey-delete]').forEach(function (button) {
+        button.addEventListener('click', async function () {
+          var status = document.getElementById('passkey-account-status');
+          if (!window.confirm('Remove this passkey? Other active sessions will be revoked.')) return;
+          try {
+            button.disabled = true;
+            await postJson('/oidc/passkeys/delete', {
+              _csrf: document.getElementById('account-passkey-csrf').value,
+              passkeyId: button.getAttribute('data-passkey-delete')
+            });
+            setStatus(status, 'Passkey removed. Refreshing…');
+            window.location.reload();
+          } catch (error) {
+            setStatus(status, friendlyPasskeyError(error));
+            button.disabled = false;
+          }
+        });
+      });`;
+
+  return `<script>
+    (function () {
+      function ensureWebAuthn() {
+        if (!window.PublicKeyCredential || !navigator.credentials) {
+          throw new Error('Passkeys are not supported by this browser.');
+        }
+      }
+      function bytes(value) {
+        var base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+        base64 += '='.repeat((4 - base64.length % 4) % 4);
+        return Uint8Array.from(atob(base64), function (char) { return char.charCodeAt(0); });
+      }
+      function base64url(value) {
+        var data = new Uint8Array(value);
+        var binary = '';
+        data.forEach(function (byte) { binary += String.fromCharCode(byte); });
+        return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');
+      }
+      function creationOptions(options) {
+        var result = Object.assign({}, options, {
+          challenge: bytes(options.challenge),
+          user: Object.assign({}, options.user, { id: bytes(options.user.id) })
+        });
+        result.excludeCredentials = (options.excludeCredentials || []).map(function (item) {
+          return Object.assign({}, item, { id: bytes(item.id) });
+        });
+        return result;
+      }
+      function requestOptions(options) {
+        var result = Object.assign({}, options, { challenge: bytes(options.challenge) });
+        if (options.allowCredentials) {
+          result.allowCredentials = options.allowCredentials.map(function (item) {
+            return Object.assign({}, item, { id: bytes(item.id) });
+          });
+        }
+        return result;
+      }
+      function registrationResponse(credential) {
+        return {
+          id: credential.id,
+          rawId: base64url(credential.rawId),
+          type: credential.type,
+          authenticatorAttachment: credential.authenticatorAttachment || undefined,
+          clientExtensionResults: credential.getClientExtensionResults(),
+          response: {
+            clientDataJSON: base64url(credential.response.clientDataJSON),
+            attestationObject: base64url(credential.response.attestationObject),
+            transports: credential.response.getTransports ? credential.response.getTransports() : undefined
+          }
+        };
+      }
+      function authenticationResponse(credential) {
+        var response = {
+          clientDataJSON: base64url(credential.response.clientDataJSON),
+          authenticatorData: base64url(credential.response.authenticatorData),
+          signature: base64url(credential.response.signature)
+        };
+        if (credential.response.userHandle) response.userHandle = base64url(credential.response.userHandle);
+        return {
+          id: credential.id,
+          rawId: base64url(credential.rawId),
+          type: credential.type,
+          authenticatorAttachment: credential.authenticatorAttachment || undefined,
+          clientExtensionResults: credential.getClientExtensionResults(),
+          response: response
+        };
+      }
+      async function postJson(url, body) {
+        var response = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(body)
+        });
+        var payload = await response.json().catch(function () { return {}; });
+        if (!response.ok) throw new Error(payload.message || 'Passkey request failed.');
+        return payload;
+      }
+      function setStatus(node, message) { if (node) node.textContent = message; }
+      function friendlyPasskeyError(error) {
+        if (error && error.name === 'NotAllowedError') return 'Passkey request cancelled or timed out.';
+        return error && error.message ? error.message : 'Passkey request failed.';
+      }
+      ${modeScript}
+    })();
+  </script>`;
+}
+
 function renderLogin(opts: {
   returnTo: string;
   error?: string;
   success?: string;
   email?: string;
   csrfToken?: string;
+  providers?: OAuthProviderName[];
 }): string {
   const returnToEnc = encodeURIComponent(opts.returnTo);
   const content = `
@@ -1431,37 +2379,23 @@ function renderLogin(opts: {
           <p>Enter your work credentials to access your organization.</p>
         </div>
 
-        <div class="auth-switcher">
-          <a href="/oidc/login?return_to=${returnToEnc}" class="auth-switcher-tab active">Sign In</a>
-          <a href="/oidc/register?return_to=${returnToEnc}" class="auth-switcher-tab">Start Free Trial</a>
-        </div>
-
         ${opts.error ? `<div class="alert-banner alert-error"><span>⚠️ ${escapeHtml(opts.error)}</span></div>` : ""}
         ${opts.success ? `<div class="alert-banner alert-success"><span>✓ ${escapeHtml(opts.success)}</span></div>` : ""}
 
-        <!-- Social SSO -->
-        <div class="social-grid">
-          <a href="/api/v1/auth/oauth/google/start?return_to=${returnToEnc}" class="social-btn" title="Sign in with Google">
-            <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
-            <span>Google</span>
-          </a>
-          <a href="/api/v1/auth/oauth/microsoft/start?return_to=${returnToEnc}" class="social-btn" title="Sign in with Microsoft">
-            <svg viewBox="0 0 23 23"><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M12 1h10v10H12z"/><path fill="#05a6f0" d="M1 12h10v10H1z"/><path fill="#ffba08" d="M12 12h10v10H12z"/></svg>
-            <span>Microsoft</span>
-          </a>
-          <a href="/api/v1/auth/oauth/github/start?return_to=${returnToEnc}" class="social-btn" title="Sign in with GitHub">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
-            <span>GitHub</span>
-          </a>
-        </div>
+        ${renderProviderButtons(opts.providers || [], "login", opts.returnTo)}
 
-        <div class="auth-divider">or sign in with email</div>
+        ${(opts.providers || []).length ? '<div class="auth-divider">or continue with email</div>' : ""}
+
+        <input type="hidden" id="passkey-login-csrf" value="${escapeHtml(opts.csrfToken || "")}"/>
+        <input type="hidden" id="passkey-return-to" value="${escapeHtml(opts.returnTo)}"/>
+        <button type="button" id="passkey-login" class="social-btn" style="width:100%;justify-content:center">Sign in with a passkey</button>
+        <p id="passkey-login-status" class="account-muted" role="status" aria-live="polite"></p>
+        <div class="auth-divider">or use your password</div>
 
         <form method="POST" action="/oidc/login">
           <input type="hidden" name="_csrf" value="${escapeHtml(opts.csrfToken || "")}"/>
           <input type="hidden" name="return_to" value="${escapeHtml(opts.returnTo)}"/>
           <input type="text" name="hp_website" class="hp-field" tabindex="-1" autocomplete="off"/>
-          <input type="hidden" name="verified_human" id="slider-verified" value="0"/>
 
           <div class="form-group">
             <label class="form-label" for="login-email">Work Email</label>
@@ -1479,6 +2413,19 @@ function renderLogin(opts: {
           </div>
 
           <div class="form-group">
+            <label class="form-label" for="login-scope">Sign-in scope</label>
+            <select id="login-scope" name="login_scope" class="form-input">
+              <option value="tenant">Organization workspace</option>
+              <option value="provider">UniERP provider operations</option>
+            </select>
+          </div>
+
+          <div class="form-group" id="organization-slug-group">
+            <label class="form-label" for="tenant-slug">Organization slug <span style="font-weight:400;color:var(--text-muted)">(needed when this email belongs to multiple organizations)</span></label>
+            <input id="tenant-slug" type="text" name="tenant_slug" autocomplete="organization" placeholder="acme-corp" class="form-input"/>
+          </div>
+
+          <div class="form-group">
             <label class="form-label" for="login-password">Password</label>
             <div class="input-wrapper">
               <input 
@@ -1493,8 +2440,8 @@ function renderLogin(opts: {
               <button 
                 type="button" 
                 class="input-icon-btn" 
-                onclick="togglePassword('login-password', this)" 
-                aria-label="Toggle password visibility"
+                data-password-target="login-password"
+                aria-label="Show password"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -1512,22 +2459,13 @@ function renderLogin(opts: {
             <a href="/oidc/forgot-password?return_to=${returnToEnc}" class="auth-link">Forgot password?</a>
           </div>
 
-          <!-- Human Verification Slider -->
-          <div class="slider-wall-box" id="slider-box">
-            <div class="slider-fill" id="slider-fill"></div>
-            <div class="slider-track-text" id="slider-text">Slide to verify human »</div>
-            <div class="slider-handle" id="slider-handle">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="9 18 15 12 9 6"></polyline>
-              </svg>
-            </div>
-          </div>
-
           <button type="submit" class="btn-submit">
             <span>Sign In to Workspace</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
           </button>
         </form>
+        <p class="auth-alternative">New to UniERP? <a href="/oidc/register?return_to=${returnToEnc}" class="auth-link">Create a free-trial workspace</a></p>
+        ${renderPasskeyClientScript("login")}
       </div>
     </div>
   `;
@@ -1629,9 +2567,13 @@ function renderRegister(opts: {
   error?: string;
   values?: Record<string, string>;
   csrfToken?: string;
+  providers?: OAuthProviderName[];
+  externalAuth?: string;
+  externalProvider?: OAuthProviderName;
 }): string {
   const returnToEnc = encodeURIComponent(opts.returnTo);
   const v = opts.values || {};
+  const legal = getRegistrationLegalConfig();
   const content = `
     <div class="auth-container">
       <!-- Form Panel -->
@@ -1641,16 +2583,16 @@ function renderRegister(opts: {
           <p>Create your organization workspace in less than a minute.</p>
         </div>
 
-        <div class="auth-switcher">
-          <a href="/oidc/login?return_to=${returnToEnc}" class="auth-switcher-tab">Sign In</a>
-          <a href="/oidc/register?return_to=${returnToEnc}" class="auth-switcher-tab active">Start Free Trial</a>
-        </div>
-
         ${opts.error ? `<div class="alert-banner alert-error"><span>⚠️ ${escapeHtml(opts.error)}</span></div>` : ""}
+
+        ${opts.externalAuth ? `<div class="alert-banner alert-success"><span>✓ ${escapeHtml(providerLabel(opts.externalProvider))} account verified. Complete your organization details.</span></div>` : renderProviderButtons(opts.providers || [], "register", opts.returnTo)}
+
+        ${!opts.externalAuth && (opts.providers || []).length ? '<div class="auth-divider">or continue with email</div>' : ""}
 
         <form method="POST" action="/oidc/register">
           <input type="hidden" name="_csrf" value="${escapeHtml(opts.csrfToken || "")}"/>
           <input type="hidden" name="return_to" value="${escapeHtml(opts.returnTo)}"/>
+          <input type="hidden" name="external_auth" value="${escapeHtml(opts.externalAuth || "")}"/>
           <input type="text" name="hp_website" class="hp-field" tabindex="-1" autocomplete="off"/>
 
           <div class="form-group">
@@ -1659,6 +2601,7 @@ function renderRegister(opts: {
               id="reg-org" 
               type="text" 
               name="organization_name" 
+              autocomplete="organization"
               required 
               placeholder="Acme Global Inc." 
               value="${escapeHtml(v.organization_name || "")}" 
@@ -1673,6 +2616,7 @@ function renderRegister(opts: {
                 id="reg-first" 
                 type="text" 
                 name="first_name" 
+                autocomplete="given-name"
                 required 
                 placeholder="Jane" 
                 value="${escapeHtml(v.first_name || "")}" 
@@ -1685,6 +2629,7 @@ function renderRegister(opts: {
                 id="reg-last" 
                 type="text" 
                 name="last_name" 
+                autocomplete="family-name"
                 required 
                 placeholder="Doe" 
                 value="${escapeHtml(v.last_name || "")}" 
@@ -1704,9 +2649,11 @@ function renderRegister(opts: {
               placeholder="jane@acme.com" 
               value="${escapeHtml(v.email || "")}" 
               class="form-input"
+              ${opts.externalAuth ? "readonly" : ""}
             />
           </div>
 
+          ${!opts.externalAuth ? `
           <div class="form-group">
             <label class="form-label" for="reg-password">Password</label>
             <div class="input-wrapper">
@@ -1718,13 +2665,13 @@ function renderRegister(opts: {
                 autocomplete="new-password" 
                 placeholder="Minimum 8 characters" 
                 class="form-input"
-                oninput="checkPasswordStrength(this.value)"
+                data-password-strength
               />
               <button 
                 type="button" 
                 class="input-icon-btn" 
-                onclick="togglePassword('reg-password', this)" 
-                aria-label="Toggle password visibility"
+                data-password-target="reg-password"
+                aria-label="Show password"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -1743,12 +2690,14 @@ function renderRegister(opts: {
               <span class="strength-label" id="strength-text">Password strength: requires 8+ chars</span>
             </div>
           </div>
+          ` : ""}
 
           <div class="form-group" style="margin-bottom: 20px;">
             <label class="checkbox-label" style="font-size: 0.8125rem;">
               <input type="checkbox" name="terms_accepted" required />
-              <span>I agree to the <a href="#" class="auth-link">Terms of Service</a> and <a href="#" class="auth-link">Privacy Policy</a>.</span>
+              <span>I agree to the <a href="${escapeHtml(legal.terms.url)}" target="_blank" rel="noopener noreferrer" class="auth-link" aria-label="Terms of Service, version ${escapeHtml(legal.terms.version)} (opens in a new tab)">Terms of Service</a> and acknowledge the <a href="${escapeHtml(legal.privacy.url)}" target="_blank" rel="noopener noreferrer" class="auth-link" aria-label="Privacy Policy, version ${escapeHtml(legal.privacy.version)} (opens in a new tab)">Privacy Policy</a>.</span>
             </label>
+            <p class="strength-label" style="margin-top:8px">Terms ${escapeHtml(legal.terms.version)} and Privacy ${escapeHtml(legal.privacy.version)}, effective ${escapeHtml(legal.privacy.effectiveDate)}.</p>
           </div>
 
           <button type="submit" class="btn-submit">
@@ -1756,6 +2705,7 @@ function renderRegister(opts: {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
           </button>
         </form>
+        <p class="auth-alternative">Already have an account? <a href="/oidc/login?return_to=${returnToEnc}" class="auth-link">Sign in</a></p>
       </div>
     </div>
 
@@ -1880,8 +2830,8 @@ function renderResetPassword(opts: {
               <button 
                 type="button" 
                 class="input-icon-btn" 
-                onclick="togglePassword('reset-pass', this)" 
-                aria-label="Toggle password visibility"
+                data-password-target="reset-pass"
+                aria-label="Show password"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -1906,8 +2856,8 @@ function renderResetPassword(opts: {
               <button 
                 type="button" 
                 class="input-icon-btn" 
-                onclick="togglePassword('reset-confirm', this)" 
-                aria-label="Toggle password visibility"
+                data-password-target="reset-confirm"
+                aria-label="Show password"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -1993,4 +2943,3 @@ function renderVerifyEmail(opts: {
   `;
   return renderDocument("Verify Email", content);
 }
-

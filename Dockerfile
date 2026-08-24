@@ -12,7 +12,7 @@
 # building.
 
 # ── build ───────────────────────────────────────────────────────────────────
-FROM node:22-slim AS builder
+FROM node:22-slim AS deps
 WORKDIR /app
 
 # openssl is Prisma's runtime requirement, and python3/make/g++ are needed by
@@ -58,6 +58,7 @@ RUN printf '@kannan19302:registry=%s\nregistry=https://registry.npmjs.org/\n' "$
 # runtime.
 ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
 
+FROM deps AS builder
 COPY tsconfig.json nest-cli.json ./
 COPY src ./src
 
@@ -92,7 +93,7 @@ COPY src ./src
 # Everything is generated and compiled here instead, on this image's platform,
 # which is the same reason the published package ships prisma/ but not the
 # generated client (see data/scripts/postinstall.mjs).
-FROM builder AS localdeps
+FROM deps AS localdeps
 
 # tsconfig.base.json is required, not optional: both packages' tsconfig.json
 # does `extends: ./tsconfig.base.json`, and a missing extends target does not
@@ -119,14 +120,32 @@ RUN rm -rf /tmp/data/src/idp-client /tmp/data/dist \
  && npm install --no-audit --no-fund \
  && npm run build
 
+# The IdP also consumes authentication hardening helpers that are newer than
+# the currently published @kannan19302/auth package. Build the workspace copy
+# for the development image so container compilation and local compilation use
+# the same API surface.
+COPY --from=localpkgs auth/package.json auth/tsconfig.json auth/tsconfig.build.json auth/tsconfig.base.json /tmp/auth/
+COPY --from=localpkgs auth/src /tmp/auth/src
+RUN cd /tmp/auth \
+ && npm install --no-audit --no-fund \
+ && npm run build
+
 # Overlay: replace the published copies with the freshly built local ones.
 # Their nested node_modules travel with them, so @prisma/client and the
 # generated .prisma/client engines resolve from inside each package.
-RUN rm -rf node_modules/@kannan19302/shared node_modules/@kannan19302/database \
+RUN rm -rf node_modules/@kannan19302/shared node_modules/@kannan19302/database node_modules/@kannan19302/auth \
  && mkdir -p node_modules/@kannan19302 \
  && cp -r /tmp/shared node_modules/@kannan19302/shared \
  && cp -r /tmp/data node_modules/@kannan19302/database \
- && rm -rf /tmp/shared /tmp/data
+ && cp -r /tmp/auth node_modules/@kannan19302/auth \
+ && rm -rf /tmp/shared /tmp/data /tmp/auth
+
+# Application source comes after the expensive workspace overlays so an IdP
+# controller/middleware edit recompiles only this application layer. When this
+# stage inherited from `builder`, every source edit invalidated Prisma
+# generation and all three local package installs even though none changed.
+COPY tsconfig.json nest-cli.json ./
+COPY src ./src
 
 # ── dev ─────────────────────────────────────────────────────────────────────
 # Build dist/ at IMAGE BUILD TIME and run `node dist/main.js`, exactly as

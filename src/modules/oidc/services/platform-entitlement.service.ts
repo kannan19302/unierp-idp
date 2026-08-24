@@ -1,27 +1,21 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { idpPrisma, prisma, runWithTenantSession } from "@kannan19302/database";
 import { OAuthError } from "./authorization.service";
 import { OAUTH_ERROR } from "../oidc.constants";
 import { emitAuthAudit } from "../../../common/audit/emit-auth-audit";
 
-/**
- * Resolves which platforms a user may enter — the data-backed replacement for
- * the hardcoded INTERNAL-platform check `PlatformAccessPolicy` shipped with in
- * W1. That policy is preserved unchanged as the control-plane boundary this
- * service defers to first; everything below it is new.
- *
- * The point of moving this into data rather than code: "Web Studio Pro unlocks
- * P5" and "Enterprise unlocks SSO federation" become rows an operator edits
- * from Provider Admin OS, not a source change and a deploy.
- *
- * Three ways a platform becomes reachable, ANY of which admits:
- *
- *   ROLE  a role held anywhere in the user's role set (a wildcard subjectId
- *         "*" grants to every role — used for the baseline tenant platforms
- *         every account reaches without a plan upgrade);
- *   PLAN  the tenant's current SaaSPlan carries the grant;
- *   USER  a specific user was granted individually (support overrides, pilots).
- */
+type Realm = "tenant" | "provider";
+type Visibility = "VISIBLE_ENABLED" | "VISIBLE_DISABLED" | "HIDDEN";
+
+export interface PlatformPrincipal {
+  realm: Realm;
+  roles: string[];
+  permissions: string[];
+  tenantId: string;
+  userId?: string;
+  assurance?: string;
+}
+
 export interface PlatformSummary {
   code: string;
   name: string;
@@ -29,74 +23,142 @@ export interface PlatformSummary {
   baseUrl: string;
   icon: string | null;
   audience: string;
+  lifecycle: string;
+  surfaceType: string;
+  category: string;
+  visibility: Exclude<Visibility, "HIDDEN">;
+  launchAllowed: boolean;
+  reasonCodes: string[];
+  obligations: string[];
 }
 
+interface PolicyContext {
+  principal: PlatformPrincipal;
+  planId: string | null;
+  groups: Set<string>;
+  now: Date;
+}
+
+interface GrantRecord {
+  platformCode: string;
+  subjectType: string;
+  subjectId: string;
+  tenantId: string | null;
+  effect: string;
+  validFrom: Date | null;
+  validUntil: Date | null;
+  conditions: unknown;
+}
+
+interface PlatformRecord {
+  code: string;
+  name: string;
+  port: number;
+  baseUrl: string;
+  icon: string | null;
+  audience: string;
+  requiresTenant: boolean;
+  lifecycle: string;
+  surfaceType: string;
+  isUserFacing: boolean;
+  discoverability: string;
+  category: string;
+  sortWeight: number;
+  minimumAssurance: string | null;
+}
+
+interface Decision {
+  visibility: Visibility;
+  launchAllowed: boolean;
+  reasonCodes: string[];
+  obligations: string[];
+}
+
+/**
+ * Policy decision point shared by the Wizard and /oidc/authorize.
+ * The Wizard is only a view of this decision; enforcement stays at the issuer.
+ */
 @Injectable()
 export class PlatformEntitlementService {
-  private readonly logger = new Logger(PlatformEntitlementService.name);
+  // The database package and the IdP are released independently. These narrow
+  // adapters describe the 1.0.15 client contract while allowing the IdP source
+  // to type-check during the coordinated package rollout from 1.0.14.
+  private readonly platformStore = idpPrisma.platform as unknown as {
+    findMany(args: unknown): Promise<PlatformRecord[]>;
+    findUnique(args: unknown): Promise<PlatformRecord | null>;
+  };
+  private readonly grantStore = idpPrisma.platformGrant as unknown as {
+    findMany(args: unknown): Promise<GrantRecord[]>;
+  };
 
-  /** Internal platforms bypass PLAN/ROLE grants entirely — see assertMayAccess. */
-  private async isInternalPlatform(platformCode: string): Promise<boolean> {
-    const platform = await idpPrisma.platform.findUnique({
-      where: { code: platformCode },
-      select: { audience: true },
+  async listEntitledPlatforms(
+    principal: PlatformPrincipal,
+  ): Promise<PlatformSummary[]> {
+    const platforms = await this.platformStore.findMany({
+      where: { isUserFacing: true },
+      orderBy: [{ sortWeight: "asc" }, { code: "asc" }],
     });
-    return platform?.audience === "INTERNAL";
+    if (platforms.length === 0) return [];
+
+    const [grants, context] = await Promise.all([
+      this.grantStore.findMany({
+        where: {
+          platformCode: { in: platforms.map((platform) => platform.code) },
+          OR: [{ tenantId: null }, { tenantId: principal.tenantId }],
+        },
+      }),
+      this.buildPolicyContext(principal),
+    ]);
+
+    return platforms.flatMap((platform) => {
+      const decision = this.decide(
+        platform,
+        grants.filter((grant) => grant.platformCode === platform.code),
+        context,
+      );
+      if (decision.visibility === "HIDDEN") return [];
+      return [{
+        code: platform.code,
+        name: platform.name,
+        port: platform.port,
+        baseUrl: platform.baseUrl,
+        icon: platform.icon,
+        audience: platform.audience,
+        lifecycle: platform.lifecycle,
+        surfaceType: platform.surfaceType,
+        category: platform.category,
+        visibility: decision.visibility,
+        launchAllowed: decision.launchAllowed,
+        reasonCodes: decision.reasonCodes,
+        obligations: decision.obligations,
+      }];
+    });
   }
 
-  /**
-   * The full grid for the Global Platform Wizard: every platform this user may
-   * currently enter, given their realm, roles, tenant and tenant's plan.
-   */
-  async listEntitledPlatforms(params: {
-    realm: "tenant" | "provider";
-    roles: string[];
-    permissions: string[];
-    tenantId: string;
-  }): Promise<PlatformSummary[]> {
-    const all = await idpPrisma.platform.findMany({ orderBy: { code: "asc" } });
-    const entitled: PlatformSummary[] = [];
-
-    for (const platform of all) {
-      const admitted = await this.checkAccess({
-        platformCode: platform.code,
-        realm: params.realm,
-        roles: params.roles,
-        permissions: params.permissions,
-        tenantId: params.tenantId,
-      });
-      if (admitted) {
-        entitled.push({
-          code: platform.code,
-          name: platform.name,
-          port: platform.port,
-          baseUrl: platform.baseUrl,
-          icon: platform.icon,
-          audience: platform.audience,
-        });
-      }
-    }
-
-    return entitled;
-  }
-
-  /**
-   * Enforcement point, called from AuthorizeController exactly where
-   * PlatformAccessPolicy was called in W1. Throws rather than returning a
-   * boolean because a refusal here must always become an OAuth `access_denied`
-   * response — there is no caller for whom a silent false is the right answer.
-   */
-  async assertMayAccess(params: {
+  async assertMayAccess(params: PlatformPrincipal & {
     platformCode: string | null;
-    realm: "tenant" | "provider";
-    roles: string[];
-    permissions: string[];
-    tenantId: string;
-    userId?: string;
   }): Promise<void> {
-    if (!params.platformCode) return; // third-party client: bounded by scope/consent instead
+    if (!params.platformCode) return;
 
-    const admitted = await this.checkAccess(params as { platformCode: string } & typeof params);
+    const platform = await this.platformStore.findUnique({
+      where: { code: params.platformCode },
+    });
+    let decision: Decision = this.hidden("PLATFORM_NOT_FOUND");
+
+    if (platform) {
+      const [grants, context] = await Promise.all([
+        this.grantStore.findMany({
+          where: {
+            platformCode: params.platformCode,
+            OR: [{ tenantId: null }, { tenantId: params.tenantId }],
+          },
+        }),
+        this.buildPolicyContext(params),
+      ]);
+      decision = this.decide(platform, grants, context);
+    }
+    const admitted = decision.launchAllowed;
+
     if (params.userId) {
       await emitAuthAudit({
         tenantId: params.tenantId,
@@ -104,6 +166,11 @@ export class PlatformEntitlementService {
         action: admitted ? "AUTH_PLATFORM_ENTRY" : "AUTH_PLATFORM_DENIED",
         entityType: "Platform",
         entityId: params.platformCode,
+        changes: {
+          realm: params.realm,
+          reasonCodes: decision.reasonCodes,
+          obligations: decision.obligations,
+        },
       });
     }
     if (!admitted) {
@@ -114,92 +181,160 @@ export class PlatformEntitlementService {
     }
   }
 
-  private async checkAccess(params: {
-    platformCode: string;
-    realm: "tenant" | "provider";
-    roles: string[];
-    permissions: string[];
-    tenantId: string;
-  }): Promise<boolean> {
-    const { platformCode, realm, roles, permissions, tenantId } = params;
+  private decide(
+    platform: {
+      audience: string;
+      lifecycle: string;
+      discoverability: string;
+      minimumAssurance: string | null;
+      requiresTenant: boolean;
+    },
+    grants: GrantRecord[],
+    context: PolicyContext,
+  ): Decision {
+    if (platform.lifecycle === "RETIRED") return this.hidden("PLATFORM_RETIRED");
 
-    // ── Control-plane boundary first, and it is NOT overridable by a grant. ──
-    //
-    // W1's reasoning is preserved exactly: a tenant SUPER_ADMIN can legitimately
-    // hold ["*"], and CONTROL_PLANE_NAMESPACES is what stops that wildcard from
-    // satisfying a control-plane check. A PlatformGrant table existing must
-    // never become a second way to reach P2 that bypasses this — an operator
-    // mis-seeding a ROLE grant against "*" must not be able to open the control
-    // plane to every tenant.
-    if (await this.isInternalPlatform(platformCode)) {
-      return this.holdsControlPlaneAuthority(realm, permissions);
+    const matching = grants.filter((grant) => this.grantMatches(grant, context));
+    if (matching.some((grant) => grant.effect === "DENY")) {
+      return this.discoverableDenied(platform, "EXPLICIT_DENY");
     }
 
-    // ── PUBLIC platform: any grant admits ──────────────────────────────────
-    const roleMatch = await idpPrisma.platformGrant.findFirst({
-      where: {
-        platformCode,
-        subjectType: "ROLE",
-        subjectId: { in: ["*", ...roles] },
-        OR: [{ tenantId: null }, { tenantId }],
-      },
-      select: { id: true },
-    });
-    if (roleMatch) return true;
+    const internal = platform.audience === "INTERNAL";
+    const hasAuthority = internal
+      ? this.holdsControlPlaneAuthority(
+          context.principal.realm,
+          context.principal.permissions,
+        )
+      : matching.some((grant) => grant.effect === "ALLOW") ||
+        (platform.discoverability === "PUBLIC" && !platform.requiresTenant);
 
-    const planGrant = await this.tenantPlanGrantsPlatform(tenantId, platformCode);
-    if (planGrant) return true;
+    if (!hasAuthority) {
+      return this.discoverableDenied(platform, "NO_MATCHING_ENTITLEMENT");
+    }
+    if (platform.lifecycle === "SUSPENDED") {
+      return this.visibleDisabled("PLATFORM_SUSPENDED");
+    }
+    if (platform.lifecycle === "MAINTENANCE") {
+      return this.visibleDisabled("PLATFORM_MAINTENANCE");
+    }
+    if (!this.meetsAssurance(context.principal.assurance, platform.minimumAssurance)) {
+      return {
+        ...this.visibleDisabled("STEP_UP_REQUIRED"),
+        obligations: [`step_up:${platform.minimumAssurance}`],
+      };
+    }
 
-    // USER grants require a user id, which this method is not given — callers
-    // needing that path use listEntitledPlatforms with a resolved subject, or
-    // extend checkAccess with userId when W6 wires per-user overrides into the
-    // Application Wizard. Documented here rather than silently absent.
-
-    return false;
+    return {
+      visibility: "VISIBLE_ENABLED",
+      launchAllowed: true,
+      reasonCodes: [internal ? "CONTROL_PLANE_AUTHORITY" : "ENTITLEMENT_MATCH"],
+      obligations: [],
+    };
   }
 
-  private holdsControlPlaneAuthority(
-    realm: "tenant" | "provider",
-    permissions: string[],
-  ): boolean {
+  private grantMatches(grant: GrantRecord, context: PolicyContext): boolean {
+    const { principal, now } = context;
+    if (grant.tenantId !== null && grant.tenantId !== principal.tenantId) return false;
+    if (grant.validFrom && grant.validFrom > now) return false;
+    if (grant.validUntil && grant.validUntil <= now) return false;
+
+    const subjectMatches =
+      (grant.subjectType === "ROLE" &&
+        (grant.subjectId === "*" || principal.roles.includes(grant.subjectId))) ||
+      (grant.subjectType === "USER" &&
+        !!principal.userId && grant.subjectId === principal.userId) ||
+      (grant.subjectType === "GROUP" && context.groups.has(grant.subjectId)) ||
+      (grant.subjectType === "PLAN" &&
+        !!context.planId && grant.subjectId === context.planId);
+    return subjectMatches && this.conditionsMatch(grant.conditions, principal);
+  }
+
+  private conditionsMatch(conditions: unknown, principal: PlatformPrincipal): boolean {
+    if (!conditions || typeof conditions !== "object" || Array.isArray(conditions)) return true;
+    const rule = conditions as {
+      realms?: unknown;
+      requiredPermissions?: unknown;
+      minimumAssurance?: unknown;
+    };
+    if (rule.realms !== undefined) {
+      if (!Array.isArray(rule.realms) || !rule.realms.includes(principal.realm)) return false;
+    }
+    if (rule.requiredPermissions !== undefined) {
+      if (!Array.isArray(rule.requiredPermissions) ||
+          !rule.requiredPermissions.every((permission) =>
+            typeof permission === "string" && principal.permissions.includes(permission))) {
+        return false;
+      }
+    }
+    if (rule.minimumAssurance !== undefined) {
+      if (typeof rule.minimumAssurance !== "string" ||
+          !this.meetsAssurance(principal.assurance, rule.minimumAssurance)) return false;
+    }
+    return true;
+  }
+
+  private async buildPolicyContext(
+    principal: PlatformPrincipal,
+  ): Promise<PolicyContext> {
+    const [subscription, memberships] = await Promise.all([
+      principal.tenantId
+        ? runWithTenantSession(
+            { tenantId: principal.tenantId, userId: principal.userId ?? "" },
+            () => prisma.tenantSubscription.findUnique({
+              where: { tenantId: principal.tenantId },
+              select: { planId: true, status: true },
+            }),
+          )
+        : Promise.resolve(null),
+      principal.userId
+        ? idpPrisma.userGroupMember.findMany({
+            where: { userId: principal.userId },
+            select: { groupId: true, group: { select: { name: true } } },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const planId = subscription && ["ACTIVE", "TRIAL"].includes(subscription.status)
+      ? subscription.planId
+      : null;
+    const groups = new Set<string>();
+    for (const membership of memberships) {
+      groups.add(membership.groupId);
+      groups.add(membership.group.name);
+    }
+    return { principal, planId, groups, now: new Date() };
+  }
+
+  private holdsControlPlaneAuthority(realm: Realm, permissions: string[]): boolean {
     if (realm !== "provider") return false;
-    const CONTROL_PLANE_NAMESPACES = ["system", "platform"];
     return permissions.some((permission) =>
-      CONTROL_PLANE_NAMESPACES.some((ns) => permission.startsWith(`${ns}.`)),
+      ["system", "platform"].some((namespace) =>
+        permission.startsWith(`${namespace}.`),
+      ),
     );
   }
 
-  private async tenantPlanGrantsPlatform(
-    tenantId: string,
-    platformCode: string,
-  ): Promise<boolean> {
-    // tenant_subscriptions is RLS ENABLE + FORCE, so this read has to run
-    // inside the tenant's own session. Unscoped it returns null, which this
-    // method cannot distinguish from "no subscription" — so every PLAN grant
-    // silently evaluated to false and the entire plan-gated entitlement path
-    // (the one that connects the revenue model to access) never opened a
-    // platform, no matter what was seeded.
-    const subscription = await runWithTenantSession(
-      { tenantId, userId: "" },
-      () =>
-        prisma.tenantSubscription.findUnique({
-          where: { tenantId },
-          select: { planId: true, status: true },
-        }),
-    );
-    if (!subscription || !["ACTIVE", "TRIAL"].includes(subscription.status)) {
-      return false;
-    }
+  private meetsAssurance(actual: string | undefined, required: string | null): boolean {
+    if (!required) return true;
+    const rank: Record<string, number> = { aal1: 1, aal2: 2, aal3: 3 };
+    return (rank[(actual ?? "aal1").toLowerCase()] ?? 0) >=
+      (rank[required.toLowerCase()] ?? Number.POSITIVE_INFINITY);
+  }
 
-    const planMatch = await idpPrisma.platformGrant.findFirst({
-      where: {
-        platformCode,
-        subjectType: "PLAN",
-        subjectId: subscription.planId,
-        OR: [{ tenantId: null }, { tenantId }],
-      },
-      select: { id: true },
-    });
-    return !!planMatch;
+  private discoverableDenied(
+    platform: { discoverability: string },
+    reason: string,
+  ): Decision {
+    return platform.discoverability === "PUBLIC"
+      ? this.visibleDisabled(reason)
+      : this.hidden(reason);
+  }
+
+  private hidden(reason: string): Decision {
+    return { visibility: "HIDDEN", launchAllowed: false, reasonCodes: [reason], obligations: [] };
+  }
+
+  private visibleDisabled(reason: string): Decision {
+    return { visibility: "VISIBLE_DISABLED", launchAllowed: false, reasonCodes: [reason], obligations: [] };
   }
 }

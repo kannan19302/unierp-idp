@@ -1,33 +1,63 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@kannan19302/database", () => ({
   idpPrisma: {
     platform: { findUnique: vi.fn(), findMany: vi.fn() },
-    platformGrant: { findFirst: vi.fn() },
+    platformGrant: { findMany: vi.fn() },
+    userGroupMember: { findMany: vi.fn() },
   },
-  prisma: {
-    tenantSubscription: { findUnique: vi.fn() },
-  },
-  runWithTenantSession: vi.fn((_s: unknown, fn: () => unknown) => fn()),
+  prisma: { tenantSubscription: { findUnique: vi.fn() } },
+  runWithTenantSession: vi.fn((_session: unknown, operation: () => unknown) =>
+    operation(),
+  ),
+}));
+vi.mock("../../../../common/audit/emit-auth-audit", () => ({
+  emitAuthAudit: vi.fn(),
 }));
 
 import { idpPrisma, prisma } from "@kannan19302/database";
-import { PlatformEntitlementService } from "../platform-entitlement.service";
 import { OAuthError } from "../authorization.service";
+import { PlatformEntitlementService } from "../platform-entitlement.service";
 
-const tenantUser = {
-  platformCode: "P2",
+const tenantPrincipal = {
   realm: "tenant" as const,
   roles: ["tenant-admin"],
-  permissions: ["saas.read", "finance.invoice.read"],
+  permissions: ["finance.invoice.read"],
   tenantId: "t1",
 };
 
-function internalPlatform() {
-  return { audience: "INTERNAL" };
+function platform(overrides: Record<string, unknown> = {}) {
+  return {
+    code: "P3",
+    name: "Tenant Applications",
+    port: 4003,
+    baseUrl: "http://localhost:4003",
+    icon: null,
+    audience: "PUBLIC",
+    requiresTenant: true,
+    lifecycle: "ACTIVE",
+    surfaceType: "USER_UI",
+    isUserFacing: true,
+    discoverability: "ENTITLED",
+    category: "WORK",
+    sortWeight: 30,
+    minimumAssurance: null,
+    ...overrides,
+  };
 }
-function publicPlatform() {
-  return { audience: "PUBLIC" };
+
+function grant(overrides: Record<string, unknown> = {}) {
+  return {
+    platformCode: "P3",
+    subjectType: "ROLE",
+    subjectId: "tenant-admin",
+    tenantId: null,
+    effect: "ALLOW",
+    validFrom: null,
+    validUntil: null,
+    conditions: {},
+    ...overrides,
+  };
 }
 
 describe("PlatformEntitlementService", () => {
@@ -36,246 +66,145 @@ describe("PlatformEntitlementService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     service = new PlatformEntitlementService();
+    vi.mocked(idpPrisma.platformGrant.findMany).mockResolvedValue([] as never);
+    vi.mocked(idpPrisma.userGroupMember.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.tenantSubscription.findUnique).mockResolvedValue(null as never);
   });
 
-  // ── The control-plane boundary — unchanged from W1, now data-driven ──────
-  describe("internal platforms are never opened by a grant", () => {
-    beforeEach(() => {
-      vi.mocked(idpPrisma.platform.findUnique).mockResolvedValue(
-        internalPlatform() as never,
-      );
-    });
+  it("keeps the provider control plane closed to tenant wildcard roles", async () => {
+    vi.mocked(idpPrisma.platform.findUnique).mockResolvedValue(
+      platform({ code: "P2", audience: "INTERNAL", discoverability: "INTERNAL" }) as never,
+    );
+    vi.mocked(idpPrisma.platformGrant.findMany).mockResolvedValue([
+      grant({ platformCode: "P2", subjectId: "*" }),
+    ] as never);
 
-    it("refuses an ordinary tenant user", async () => {
-      await expect(service.assertMayAccess(tenantUser)).rejects.toThrow(
-        OAuthError,
-      );
-      // The boundary must be checked before any grant lookup — a grant table
-      // existing must never become a second way to reach the control plane.
-      expect(idpPrisma.platformGrant.findFirst).not.toHaveBeenCalled();
-    });
-
-    it("refuses a tenant super-admin holding the wildcard permission", async () => {
-      await expect(
-        service.assertMayAccess({
-          ...tenantUser,
-          permissions: ["*"],
-          realm: "tenant",
-        }),
-      ).rejects.toThrow(/not permitted/);
-    });
-
-    it("refuses a wildcard even under a forged provider realm claim", async () => {
-      await expect(
-        service.assertMayAccess({
-          ...tenantUser,
-          permissions: ["*"],
-          realm: "provider",
-        }),
-      ).rejects.toThrow(OAuthError);
-    });
-
-    it("admits provider staff holding a system.* permission", async () => {
-      await expect(
-        service.assertMayAccess({
-          ...tenantUser,
-          permissions: ["system.tenant.read"],
-          realm: "provider",
-        }),
-      ).resolves.toBeUndefined();
-    });
-
-    it("admits provider staff holding a platform.* permission", async () => {
-      await expect(
-        service.assertMayAccess({
-          ...tenantUser,
-          permissions: ["platform.sre.read"],
-          realm: "provider",
-        }),
-      ).resolves.toBeUndefined();
-    });
-
-    it("is not fooled by a namespace-name prefix that is not actually the namespace", async () => {
-      await expect(
-        service.assertMayAccess({
-          ...tenantUser,
-          permissions: ["systemic.read", "platformx.read"],
-          realm: "provider",
-        }),
-      ).rejects.toThrow(OAuthError);
-    });
+    await expect(service.assertMayAccess({
+      ...tenantPrincipal,
+      roles: ["*"],
+      permissions: ["*"],
+      platformCode: "P2",
+    })).rejects.toThrow(OAuthError);
   });
 
-  // ── PUBLIC platforms — grant-based, the new W2 behaviour ──────────────────
-  describe("PUBLIC platforms resolve grants", () => {
-    beforeEach(() => {
-      vi.mocked(idpPrisma.platform.findUnique).mockResolvedValue(
-        publicPlatform() as never,
-      );
-    });
+  it("admits provider staff with concrete control-plane authority", async () => {
+    vi.mocked(idpPrisma.platform.findUnique).mockResolvedValue(
+      platform({ code: "P2", audience: "INTERNAL", discoverability: "INTERNAL" }) as never,
+    );
 
-    it("admits when a ROLE grant matches one of the user's roles", async () => {
-      vi.mocked(idpPrisma.platformGrant.findFirst).mockResolvedValue({
-        id: "g1",
-      } as never);
-
-      await expect(
-        service.assertMayAccess({ ...tenantUser, platformCode: "P3" }),
-      ).resolves.toBeUndefined();
-
-      expect(idpPrisma.platformGrant.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            platformCode: "P3",
-            subjectType: "ROLE",
-            subjectId: { in: ["*", "tenant-admin"] },
-          }),
-        }),
-      );
-    });
-
-    it("admits via the wildcard ROLE grant used for baseline platforms", async () => {
-      // seed-platform-entitlement.ts grants subjectId "*" for the platforms
-      // every tenant user reaches without a plan upgrade.
-      vi.mocked(idpPrisma.platformGrant.findFirst).mockImplementation(
-        (async (args: { where: { subjectId: { in: string[] } } }) =>
-          args.where.subjectId.in.includes("*") ? { id: "wildcard" } : null) as never,
-      );
-
-      await expect(
-        service.assertMayAccess({ ...tenantUser, platformCode: "P7" }),
-      ).resolves.toBeUndefined();
-    });
-
-    it("falls through to the tenant's plan when no ROLE grant matches", async () => {
-      vi.mocked(idpPrisma.platformGrant.findFirst)
-        .mockResolvedValueOnce(null as never) // ROLE lookup
-        .mockResolvedValueOnce({ id: "plan-grant" } as never); // PLAN lookup
-      vi.mocked(prisma.tenantSubscription.findUnique).mockResolvedValue({
-        planId: "plan-business",
-        status: "ACTIVE",
-      } as never);
-
-      await expect(
-        service.assertMayAccess({ ...tenantUser, platformCode: "P5" }),
-      ).resolves.toBeUndefined();
-
-      expect(idpPrisma.platformGrant.findFirst).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            platformCode: "P5",
-            subjectType: "PLAN",
-            subjectId: "plan-business",
-          }),
-        }),
-      );
-    });
-
-    it("refuses when no ROLE or PLAN grant covers the platform", async () => {
-      vi.mocked(idpPrisma.platformGrant.findFirst).mockResolvedValue(
-        null as never,
-      );
-      vi.mocked(prisma.tenantSubscription.findUnique).mockResolvedValue(
-        null as never,
-      );
-
-      await expect(
-        service.assertMayAccess({ ...tenantUser, platformCode: "P5" }),
-      ).rejects.toThrow(OAuthError);
-    });
-
-    it("does not consult a CANCELED subscription's plan grants", async () => {
-      // A lapsed plan must not keep unlocking what it once did.
-      vi.mocked(idpPrisma.platformGrant.findFirst).mockResolvedValueOnce(
-        null as never,
-      );
-      vi.mocked(prisma.tenantSubscription.findUnique).mockResolvedValue({
-        planId: "plan-business",
-        status: "CANCELED",
-      } as never);
-
-      await expect(
-        service.assertMayAccess({ ...tenantUser, platformCode: "P5" }),
-      ).rejects.toThrow(OAuthError);
-      // Never even asked whether that plan has a grant.
-      expect(idpPrisma.platformGrant.findFirst).toHaveBeenCalledTimes(1);
-    });
-
-    it("honours a TRIAL subscription the same as ACTIVE", async () => {
-      vi.mocked(idpPrisma.platformGrant.findFirst)
-        .mockResolvedValueOnce(null as never)
-        .mockResolvedValueOnce({ id: "g" } as never);
-      vi.mocked(prisma.tenantSubscription.findUnique).mockResolvedValue({
-        planId: "plan-business",
-        status: "TRIAL",
-      } as never);
-
-      await expect(
-        service.assertMayAccess({ ...tenantUser, platformCode: "P5" }),
-      ).resolves.toBeUndefined();
-    });
+    await expect(service.assertMayAccess({
+      ...tenantPrincipal,
+      realm: "provider",
+      permissions: ["system.tenant.read"],
+      platformCode: "P2",
+    })).resolves.toBeUndefined();
   });
 
-  describe("clients with no platform binding", () => {
-    it("passes third-party clients through untouched — bounded by scope/consent instead", async () => {
-      await expect(
-        service.assertMayAccess({ ...tenantUser, platformCode: null }),
-      ).resolves.toBeUndefined();
-      expect(idpPrisma.platform.findUnique).not.toHaveBeenCalled();
-    });
+  it("honours a tenant-scoped USER grant", async () => {
+    vi.mocked(idpPrisma.platform.findUnique).mockResolvedValue(platform() as never);
+    vi.mocked(idpPrisma.platformGrant.findMany).mockResolvedValue([
+      grant({ subjectType: "USER", subjectId: "u1", tenantId: "t1" }),
+    ] as never);
+
+    await expect(service.assertMayAccess({
+      ...tenantPrincipal,
+      userId: "u1",
+      roles: [],
+      platformCode: "P3",
+    })).resolves.toBeUndefined();
   });
 
-  describe("listEntitledPlatforms", () => {
-    it("returns only the platforms the caller is actually entitled to", async () => {
-      vi.mocked(idpPrisma.platform.findMany).mockResolvedValue([
-        { code: "P2", name: "Provider Admin OS", port: 4002, baseUrl: "http://localhost:4002", icon: null, audience: "INTERNAL" },
-        { code: "P3", name: "Tenant Applications", port: 4003, baseUrl: "http://localhost:4003", icon: null, audience: "PUBLIC" },
-        { code: "P5", name: "Web Studio", port: 4005, baseUrl: "http://localhost:4005", icon: null, audience: "PUBLIC" },
-      ] as never);
-      vi.mocked(idpPrisma.platform.findUnique).mockImplementation(
-        (async ({ where }: { where: { code: string } }) =>
-          where.code === "P2" ? internalPlatform() : publicPlatform()) as never,
-      );
-      // P3 has a ROLE grant; P5 has neither ROLE nor an active plan grant.
-      vi.mocked(idpPrisma.platformGrant.findFirst).mockImplementation(
-        (async (args: { where: { platformCode: string } }) =>
-          args.where.platformCode === "P3" ? { id: "g" } : null) as never,
-      );
-      vi.mocked(prisma.tenantSubscription.findUnique).mockResolvedValue(
-        null as never,
-      );
+  it("gives a matching DENY precedence over ROLE and PLAN allows", async () => {
+    vi.mocked(idpPrisma.platform.findUnique).mockResolvedValue(platform() as never);
+    vi.mocked(prisma.tenantSubscription.findUnique).mockResolvedValue({
+      planId: "business",
+      status: "ACTIVE",
+    } as never);
+    vi.mocked(idpPrisma.platformGrant.findMany).mockResolvedValue([
+      grant(),
+      grant({ subjectType: "PLAN", subjectId: "business" }),
+      grant({ effect: "DENY", subjectType: "USER", subjectId: "u1", tenantId: "t1" }),
+    ] as never);
 
-      const result = await service.listEntitledPlatforms({
-        realm: "tenant",
-        roles: ["tenant-admin"],
-        permissions: [],
-        tenantId: "t1",
-      });
+    await expect(service.assertMayAccess({
+      ...tenantPrincipal,
+      userId: "u1",
+      platformCode: "P3",
+    })).rejects.toThrow(OAuthError);
+  });
 
-      expect(result.map((p) => p.code)).toEqual(["P3"]);
-    });
+  it("ignores grants outside their validity window", async () => {
+    vi.mocked(idpPrisma.platform.findUnique).mockResolvedValue(platform() as never);
+    vi.mocked(idpPrisma.platformGrant.findMany).mockResolvedValue([
+      grant({ validUntil: new Date("2020-01-01T00:00:00Z") }),
+    ] as never);
 
-    it("includes the control plane for provider staff, alongside public platforms", async () => {
-      vi.mocked(idpPrisma.platform.findMany).mockResolvedValue([
-        { code: "P2", name: "Provider Admin OS", port: 4002, baseUrl: "x", icon: null, audience: "INTERNAL" },
-        { code: "P3", name: "Tenant Applications", port: 4003, baseUrl: "x", icon: null, audience: "PUBLIC" },
-      ] as never);
-      vi.mocked(idpPrisma.platform.findUnique).mockImplementation(
-        (async ({ where }: { where: { code: string } }) =>
-          where.code === "P2" ? internalPlatform() : publicPlatform()) as never,
-      );
-      vi.mocked(idpPrisma.platformGrant.findFirst).mockResolvedValue({
-        id: "g",
-      } as never);
+    await expect(service.assertMayAccess({
+      ...tenantPrincipal,
+      platformCode: "P3",
+    })).rejects.toThrow(OAuthError);
+  });
 
-      const result = await service.listEntitledPlatforms({
-        realm: "provider",
-        roles: [],
-        permissions: ["system.tenant.read"],
-        tenantId: "t1",
-      });
+  it("resolves GROUP grants from authoritative membership", async () => {
+    vi.mocked(idpPrisma.platform.findUnique).mockResolvedValue(platform() as never);
+    vi.mocked(idpPrisma.userGroupMember.findMany).mockResolvedValue([
+      { groupId: "g-finance", group: { name: "Finance" } },
+    ] as never);
+    vi.mocked(idpPrisma.platformGrant.findMany).mockResolvedValue([
+      grant({ subjectType: "GROUP", subjectId: "g-finance" }),
+    ] as never);
 
-      expect(result.map((p) => p.code).sort()).toEqual(["P2", "P3"]);
+    await expect(service.assertMayAccess({
+      ...tenantPrincipal,
+      userId: "u1",
+      roles: [],
+      platformCode: "P3",
+    })).resolves.toBeUndefined();
+  });
+
+  it("never launches a retired platform even when a grant survives", async () => {
+    vi.mocked(idpPrisma.platform.findUnique).mockResolvedValue(
+      platform({ code: "P5", lifecycle: "RETIRED", isUserFacing: false }) as never,
+    );
+    vi.mocked(idpPrisma.platformGrant.findMany).mockResolvedValue([
+      grant({ platformCode: "P5" }),
+    ] as never);
+
+    await expect(service.assertMayAccess({
+      ...tenantPrincipal,
+      platformCode: "P5",
+    })).rejects.toThrow(OAuthError);
+  });
+
+  it("builds the Wizard response with batched catalog, grant and plan reads", async () => {
+    vi.mocked(idpPrisma.platform.findMany).mockResolvedValue([
+      platform({ code: "P1", name: "Marketing", requiresTenant: false, discoverability: "PUBLIC", sortWeight: 10 }),
+      platform(),
+      platform({ code: "P8", name: "Developer Platform", sortWeight: 80 }),
+    ] as never);
+    vi.mocked(idpPrisma.platformGrant.findMany).mockResolvedValue([grant()] as never);
+
+    const result = await service.listEntitledPlatforms(tenantPrincipal);
+
+    expect(result.map((entry) => entry.code)).toEqual(["P1", "P3"]);
+    expect(result.every((entry) => entry.launchAllowed)).toBe(true);
+    expect(idpPrisma.platform.findMany).toHaveBeenCalledTimes(1);
+    expect(idpPrisma.platformGrant.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.tenantSubscription.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a public maintenance surface as visible but disabled", async () => {
+    vi.mocked(idpPrisma.platform.findMany).mockResolvedValue([
+      platform({ code: "P1", requiresTenant: false, discoverability: "PUBLIC", lifecycle: "MAINTENANCE" }),
+    ] as never);
+
+    const [result] = await service.listEntitledPlatforms(tenantPrincipal);
+
+    expect(result).toMatchObject({
+      code: "P1",
+      visibility: "VISIBLE_DISABLED",
+      launchAllowed: false,
+      reasonCodes: ["PLATFORM_MAINTENANCE"],
     });
   });
 });

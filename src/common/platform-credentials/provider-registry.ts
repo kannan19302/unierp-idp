@@ -27,6 +27,12 @@ export const PLATFORM_CREDENTIAL_PROVIDERS: CredentialProviderSpec[] = [
     label: "Google OAuth",
     fields: [
       {
+        key: "enabled",
+        label: "Enabled",
+        sensitive: false,
+        envFallback: "GOOGLE_OAUTH_ENABLED",
+      },
+      {
         key: "clientId",
         label: "Client ID",
         sensitive: false,
@@ -44,6 +50,12 @@ export const PLATFORM_CREDENTIAL_PROVIDERS: CredentialProviderSpec[] = [
     provider: "microsoft-oauth",
     label: "Microsoft OAuth",
     fields: [
+      {
+        key: "enabled",
+        label: "Enabled",
+        sensitive: false,
+        envFallback: "MICROSOFT_OAUTH_ENABLED",
+      },
       {
         key: "clientId",
         label: "Client ID",
@@ -65,6 +77,30 @@ export const PLATFORM_CREDENTIAL_PROVIDERS: CredentialProviderSpec[] = [
     ],
   },
   {
+    provider: "github-oauth",
+    label: "GitHub OAuth",
+    fields: [
+      {
+        key: "enabled",
+        label: "Enabled",
+        sensitive: false,
+        envFallback: "GITHUB_OAUTH_ENABLED",
+      },
+      {
+        key: "clientId",
+        label: "Client ID",
+        sensitive: false,
+        envFallback: "GITHUB_OAUTH_CLIENT_ID",
+      },
+      {
+        key: "clientSecret",
+        label: "Client Secret",
+        sensitive: true,
+        envFallback: "GITHUB_OAUTH_CLIENT_SECRET",
+      },
+    ],
+  },
+  {
     provider: "stripe",
     label: "Stripe",
     fields: [
@@ -79,6 +115,42 @@ export const PLATFORM_CREDENTIAL_PROVIDERS: CredentialProviderSpec[] = [
         label: "Webhook Signing Secret",
         sensitive: true,
         envFallback: "STRIPE_WEBHOOK_SECRET",
+      },
+    ],
+  },
+  {
+    provider: "resend",
+    label: "Resend Email API",
+    fields: [
+      {
+        key: "apiKey",
+        label: "API Key",
+        sensitive: true,
+        envFallback: "RESEND_API_KEY",
+      },
+      {
+        key: "from",
+        label: "Verified From Address",
+        sensitive: false,
+        envFallback: "EMAIL_FROM",
+      },
+    ],
+  },
+  {
+    provider: "brevo",
+    label: "Brevo Email API",
+    fields: [
+      {
+        key: "apiKey",
+        label: "API Key",
+        sensitive: true,
+        envFallback: "BREVO_API_KEY",
+      },
+      {
+        key: "from",
+        label: "Verified From Address",
+        sensitive: false,
+        envFallback: "EMAIL_FROM",
       },
     ],
   },

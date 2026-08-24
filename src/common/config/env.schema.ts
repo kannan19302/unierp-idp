@@ -57,6 +57,31 @@ export const envSchema = z.object({
     .url()
     .default("http://localhost:3000")
     .describe("Public web app origin (links in emails, redirects)"),
+  PLATFORM_WIZARD_URL: z
+    .string()
+    .url()
+    .default("http://localhost:4000")
+    .describe("Public Platform Wizard origin used by hosted identity navigation"),
+  TENANT_APP_URL: z
+    .string()
+    .url()
+    .default("http://localhost:4003")
+    .describe("Public tenant application origin used by Account Center destinations"),
+  WEBAUTHN_RP_ID: z
+    .string()
+    .min(1)
+    .default("localhost")
+    .describe("WebAuthn relying-party domain without scheme or path"),
+  WEBAUTHN_RP_NAME: z
+    .string()
+    .min(1)
+    .default("UniERP")
+    .describe("Human-readable relying-party name shown by authenticators"),
+  WEBAUTHN_ORIGINS: z
+    .string()
+    .min(1)
+    .default("http://localhost:3005")
+    .describe("Comma-separated exact browser origins permitted for WebAuthn ceremonies"),
 
   // ── Secrets (strict length in production) ──────────────────────────────
   NEXTAUTH_SECRET: z
@@ -120,6 +145,46 @@ export const envSchema = z.object({
     .describe("S3 bucket for uploads"),
 
   // ── Email ──────────────────────────────────────────────────────────────
+  EMAIL_PROVIDER: z
+    .enum(["auto", "resend", "brevo", "smtp"])
+    .default("auto")
+    .describe("Preferred transactional email provider; auto uses API providers before SMTP"),
+  EMAIL_FROM: z
+    .string()
+    .default("UniERP <noreply@kannan19302.dev>")
+    .describe("Verified sender identity used by transactional email providers"),
+  RESEND_API_KEY: z
+    .string()
+    .optional()
+    .describe("Resend transactional email API key (primary free-tier option)"),
+  BREVO_API_KEY: z
+    .string()
+    .optional()
+    .describe("Brevo transactional email API key (fallback free-tier option)"),
+  RESEND_WEBHOOK_SECRET: z
+    .string()
+    .optional()
+    .describe("Resend/Svix signing secret for authenticated delivery callbacks"),
+  BREVO_WEBHOOK_SECRET: z
+    .string()
+    .optional()
+    .describe("Password used by Brevo Basic-auth webhook callbacks"),
+  EMAIL_RECIPIENT_HASH_KEY: z
+    .string()
+    .optional()
+    .describe("HMAC key for privacy-minimised recipient delivery fingerprints"),
+  EMAIL_DAILY_TENANT_QUOTA: z.coerce.number().int().min(1).default(1000)
+    .describe("Maximum transactional email reservations per tenant per UTC day"),
+  EMAIL_CANARY_RECIPIENT: z.string().email().optional()
+    .describe("Dedicated inbox that receives the production email delivery canary"),
+  EMAIL_CANARY_TENANT_ID: z.string().min(1).optional()
+    .describe("Tenant charged for delivery-canary quota and ledger records"),
+  EMAIL_CANARY_INTERVAL_MINUTES: z.coerce.number().int().min(15).default(360)
+    .describe("Interval between real email delivery probes"),
+  EMAIL_CANARY_GRACE_MINUTES: z.coerce.number().int().min(1).default(15)
+    .describe("Maximum wait for a canary delivered callback"),
+  EMAIL_CANARY_MAX_AGE_MINUTES: z.coerce.number().int().min(30).default(480)
+    .describe("Maximum acceptable age of the latest email canary"),
   SMTP_HOST: z
     .string()
     .optional()
@@ -132,6 +197,38 @@ export const envSchema = z.object({
     .default("noreply@kannan19302.dev")
     .describe("From address for system email"),
 
+  // ── Registration legal documents ─────────────────────────────────────
+  TERMS_OF_SERVICE_URL: z
+    .string()
+    .url()
+    .default("http://localhost:4001/terms")
+    .describe("Durable public URL for the Terms of Service accepted at registration"),
+  TERMS_OF_SERVICE_VERSION: z
+    .string()
+    .min(1)
+    .default("2026-07-development")
+    .describe("Immutable Terms of Service document/version identifier"),
+  TERMS_OF_SERVICE_EFFECTIVE_DATE: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "must use YYYY-MM-DD")
+    .default("2026-07-01")
+    .describe("Terms of Service effective date"),
+  PRIVACY_POLICY_URL: z
+    .string()
+    .url()
+    .default("http://localhost:4001/privacy")
+    .describe("Durable public URL for the Privacy Policy acknowledged at registration"),
+  PRIVACY_POLICY_VERSION: z
+    .string()
+    .min(1)
+    .default("2026-07-development")
+    .describe("Immutable Privacy Policy document/version identifier"),
+  PRIVACY_POLICY_EFFECTIVE_DATE: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "must use YYYY-MM-DD")
+    .default("2026-07-01")
+    .describe("Privacy Policy effective date"),
+
   // ── OAuth integrations (optional feature unlocks) ──────────────────────
   GOOGLE_OAUTH_CLIENT_ID: z
     .string()
@@ -141,6 +238,10 @@ export const envSchema = z.object({
     .string()
     .optional()
     .describe("CRM mailbox: Google OAuth client secret"),
+  GOOGLE_OAUTH_ENABLED: z
+    .enum(["true", "false"])
+    .optional()
+    .describe("Enable Google login/registration when credentials are configured"),
   MICROSOFT_OAUTH_CLIENT_ID: z
     .string()
     .optional()
@@ -149,6 +250,26 @@ export const envSchema = z.object({
     .string()
     .optional()
     .describe("CRM mailbox: Microsoft OAuth client secret"),
+  MICROSOFT_OAUTH_TENANT: z
+    .string()
+    .optional()
+    .describe("Microsoft Entra tenant id or common/organizations/consumers"),
+  MICROSOFT_OAUTH_ENABLED: z
+    .enum(["true", "false"])
+    .optional()
+    .describe("Enable Microsoft login/registration when credentials are configured"),
+  GITHUB_OAUTH_CLIENT_ID: z
+    .string()
+    .optional()
+    .describe("GitHub OAuth app client id for login and registration"),
+  GITHUB_OAUTH_CLIENT_SECRET: z
+    .string()
+    .optional()
+    .describe("GitHub OAuth app client secret for login and registration"),
+  GITHUB_OAUTH_ENABLED: z
+    .enum(["true", "false"])
+    .optional()
+    .describe("Enable GitHub login/registration when credentials are configured"),
 
   // ── Payments ───────────────────────────────────────────────────────────
   STRIPE_SECRET_KEY: z
@@ -279,6 +400,66 @@ export function checkEnv(
       errors.push(
         "DATABASE_OWNER_URL: localhost database not allowed in production",
       );
+    }
+    for (const [key, value] of [
+      ["TERMS_OF_SERVICE_URL", env.TERMS_OF_SERVICE_URL],
+      ["PRIVACY_POLICY_URL", env.PRIVACY_POLICY_URL],
+      ["PLATFORM_WIZARD_URL", env.PLATFORM_WIZARD_URL],
+      ["TENANT_APP_URL", env.TENANT_APP_URL],
+    ] as const) {
+      if (/localhost|127\.0\.0\.1|\.local(?=\/|$)/i.test(value)) {
+        errors.push(`${key}: development/local URL not allowed in production`);
+      }
+      if (!value.startsWith("https://")) {
+        errors.push(`${key}: HTTPS is required in production`);
+      }
+    }
+    const hasApiProvider = Boolean(env.RESEND_API_KEY || env.BREVO_API_KEY);
+    const hasSmtp = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASSWORD);
+    if (!hasApiProvider && !hasSmtp) {
+      errors.push("EMAIL_PROVIDER: configure Resend, Brevo, or authenticated SMTP in production");
+    }
+    if (env.RESEND_API_KEY && !env.RESEND_WEBHOOK_SECRET) {
+      errors.push("RESEND_WEBHOOK_SECRET: required when Resend delivery is enabled");
+    }
+    if (env.BREVO_API_KEY && !env.BREVO_WEBHOOK_SECRET) {
+      errors.push("BREVO_WEBHOOK_SECRET: required when Brevo delivery is enabled");
+    }
+    for (const key of ["EMAIL_RECIPIENT_HASH_KEY", "EMAIL_CANARY_RECIPIENT", "EMAIL_CANARY_TENANT_ID"] as const) {
+      if (!env[key]) errors.push(`${key}: required for production email operations`);
+    }
+    if ((env.EMAIL_RECIPIENT_HASH_KEY?.length ?? 0) < 32) {
+      errors.push("EMAIL_RECIPIENT_HASH_KEY: must be at least 32 characters in production");
+    }
+    if (/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(env.WEBAUTHN_RP_ID)) {
+      errors.push("WEBAUTHN_RP_ID: local relying-party id not allowed in production");
+    }
+    if (env.WEBAUTHN_RP_ID.includes("://") || env.WEBAUTHN_RP_ID.includes("/")) {
+      errors.push("WEBAUTHN_RP_ID: must be a domain without scheme or path");
+    }
+    for (const rawOrigin of env.WEBAUTHN_ORIGINS.split(",")) {
+      const value = rawOrigin.trim();
+      try {
+        const origin = new URL(value);
+        if (origin.origin !== value || origin.protocol !== "https:") {
+          errors.push(`WEBAUTHN_ORIGINS: exact HTTPS origin required (${value})`);
+        }
+        const hostname = origin.hostname.toLowerCase();
+        const rpId = env.WEBAUTHN_RP_ID.toLowerCase();
+        if (hostname !== rpId && !hostname.endsWith(`.${rpId}`)) {
+          errors.push(`WEBAUTHN_ORIGINS: ${hostname} is not within RP ID ${rpId}`);
+        }
+      } catch {
+        errors.push(`WEBAUTHN_ORIGINS: invalid origin (${value})`);
+      }
+    }
+    for (const [key, value] of [
+      ["TERMS_OF_SERVICE_VERSION", env.TERMS_OF_SERVICE_VERSION],
+      ["PRIVACY_POLICY_VERSION", env.PRIVACY_POLICY_VERSION],
+    ] as const) {
+      if (/development|draft|placeholder/i.test(value)) {
+        errors.push(`${key}: draft/development version not allowed in production`);
+      }
     }
   }
   return errors.length > 0 ? { env: null, errors } : { env, errors: [] };

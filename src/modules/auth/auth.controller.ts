@@ -163,8 +163,12 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   async register(
     @Body(new ZodValidationPipe(registerSchema)) dto: RegisterInput,
+    @Req() req: Request,
   ) {
-    return this.authService.register(dto);
+    return this.authService.register(dto, {
+      ipAddress: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers["user-agent"],
+    });
   }
 
   @ApiOperation({ summary: "Login" })
@@ -269,17 +273,18 @@ export class AuthController {
   }
 
   @ApiOperation({ summary: "Get profile" })
-  @Permissions("auth.read")
   @Get("me")
-  @UseGuards(JwtAuthGuard, RbacGuard)
+  // Self-service authority is the authenticated subject itself. The service
+  // receives the user id from the verified token, never from a request param;
+  // auth.read remains reserved for administrative/directory operations.
+  @UseGuards(JwtAuthGuard)
   async getProfile(@Req() req: AuthenticatedRequest) {
     return this.authService.getProfile(req.user.userId, req.user.tenantId);
   }
 
   @ApiOperation({ summary: "Update profile" })
-  @Permissions("auth.update")
   @Patch("me")
-  @UseGuards(JwtAuthGuard, RbacGuard)
+  @UseGuards(JwtAuthGuard)
   async updateProfile(
     @Req() req: AuthenticatedRequest,
     @ZodBody(z.any()) body: Record<string, unknown>,
@@ -291,7 +296,7 @@ export class AuthController {
       type: "body",
       metatype: Object,
     });
-    return this.authService.updateProfile(req.user.userId, dto);
+    return this.authService.updateProfile(req.user.userId, req.user.tenantId, dto);
   }
 
   @ApiOperation({ summary: "List tenants this account can sign in to" })

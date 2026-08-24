@@ -11,6 +11,9 @@ import { PlatformEntitlementService } from "./services/platform-entitlement.serv
 import { PlatformsController } from "./controllers/platforms.controller";
 import { AgentDelegationService } from "./services/agent-delegation.service";
 import { LoginController } from "./controllers/login.controller";
+import { PasskeyController } from "./controllers/passkey.controller";
+import { AccountGovernanceController } from "./controllers/account-governance.controller";
+import { AccountContactController } from "./controllers/account-contact.controller";
 import {
   SessionController,
   ConsentController,
@@ -35,6 +38,9 @@ import {
     SessionController,
     ConsentController,
     PlatformsController,
+    PasskeyController,
+    AccountGovernanceController,
+    AccountContactController,
   ],
   providers: [
     SigningKeyService,

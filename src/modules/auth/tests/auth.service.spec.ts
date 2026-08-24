@@ -14,6 +14,7 @@ vi.mock("@kannan19302/database", () => {
       tenant: {
         findUnique: vi.fn(),
         create: vi.fn(),
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
       user: {
         findFirst: vi.fn(),
@@ -78,6 +79,9 @@ vi.mock("@kannan19302/database", () => {
           },
           userRole: {
             create: vi.fn().mockResolvedValue({ id: "ur-123" }),
+          },
+          userIdentity: {
+            create: vi.fn().mockResolvedValue({ id: "identity-123" }),
           },
           organization: {
             create: vi.fn().mockResolvedValue({ id: "org-123" }),
@@ -183,16 +187,104 @@ describe("AuthService", () => {
         firstName: "Super",
         lastName: "Admin",
         organizationName: "Acme",
+        termsAccepted: true,
       });
 
       expect(result).toBeDefined();
       expect(result.user.email).toBe("admin@uni-erp.com");
       expect(result.tenant.name).toBe("Acme");
+      expect(prisma.tenant.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            settings: expect.objectContaining({
+              termsAcceptedAt: expect.any(String),
+              legalConsent: expect.objectContaining({
+                mechanism: "registration_checkbox",
+                terms: expect.objectContaining({
+                  url: "http://localhost:4001/terms",
+                  version: "2026-07-development",
+                }),
+                privacy: expect.objectContaining({
+                  url: "http://localhost:4001/privacy",
+                  version: "2026-07-development",
+                }),
+              }),
+            }),
+          }),
+        }),
+      );
       // Non-production: register surfaces the verification link for dev ergonomics.
       expect(
         (result as { developerVerificationLink?: string })
           .developerVerificationLink,
       ).toContain("/verify-email?token=");
+    });
+
+    it("registers a verified passwordless tenant owner from an external identity", async () => {
+      const { prisma } = await import("@kannan19302/database");
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.tenant.create).mockResolvedValue({
+        id: "tenant-123",
+        name: "Acme",
+        slug: "acme",
+      } as never);
+      vi.mocked(prisma.organization.create).mockResolvedValue({
+        id: "org-123",
+      } as never);
+      vi.mocked(prisma.saaSPlan.upsert).mockResolvedValue({
+        id: "plan-free",
+      } as never);
+      vi.mocked(prisma.tenantSubscription.create).mockResolvedValue({} as never);
+
+      const result = await authService.register({
+        email: "owner@example.com",
+        firstName: "External",
+        lastName: "Owner",
+        organizationName: "Acme",
+        termsAccepted: true,
+        externalIdentity: {
+          provider: "google",
+          subject: "google-subject-123",
+        },
+      });
+
+      expect(result.user.id).toBe("user-123");
+      expect(
+        (result as { developerVerificationLink?: string })
+          .developerVerificationLink,
+      ).toBeUndefined();
+    });
+
+    it("compensates a newly-created tenant when identity provisioning fails", async () => {
+      const { prisma } = await import("@kannan19302/database");
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.tenant.create).mockResolvedValue({
+        id: "tenant-compensate",
+        name: "Partial Tenant",
+        slug: "partial-tenant",
+      } as never);
+      vi.mocked(idpPrisma.$transaction).mockImplementationOnce(
+        (async (operation: (tx: unknown) => unknown) =>
+          operation({
+            $executeRaw: vi.fn().mockRejectedValue(new Error("identity failure")),
+          })) as never,
+      );
+
+      await expect(
+        authService.register({
+          email: "partial@example.com",
+          password: "AdminPass123!",
+          confirmPassword: "AdminPass123!",
+          firstName: "Partial",
+          lastName: "Owner",
+          organizationName: "Partial Tenant",
+          termsAccepted: true,
+        }),
+      ).rejects.toThrow("identity failure");
+
+      expect(prisma.tenant.deleteMany).toHaveBeenCalledWith({
+        where: { id: "tenant-compensate" },
+      });
     });
   });
 
@@ -320,6 +412,61 @@ describe("AuthService", () => {
         (result as { developerVerificationLink?: string })
           .developerVerificationLink,
       ).toBeUndefined();
+    });
+  });
+
+  describe("providerLogin", () => {
+    it("selects an explicitly authorized provider principal across tenant compatibility rows", async () => {
+      const { prisma } = await import("@kannan19302/database");
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+        id: "tnt-provider",
+        slug: "provider",
+      } as never);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: "user-123", tenant_id: "tenant-123" },
+      ] as never);
+      vi.spyOn(authService, "resolveRolesAndPermissions").mockResolvedValue({
+        roles: ["platform.admin"],
+        permissions: ["system.superadmin.access"],
+      });
+      const authenticate = vi
+        .spyOn(authService as any, "authenticateInternal")
+        .mockResolvedValue({ token: "provider-token" });
+
+      await expect(
+        authService.providerLogin({
+          email: "kannan19302@gmail.com",
+          password: "not-inspected-by-selection",
+        }),
+      ).resolves.toEqual({ token: "provider-token" });
+      expect(authenticate).toHaveBeenCalledWith(
+        "tenant-123",
+        expect.objectContaining({ email: "kannan19302@gmail.com" }),
+        undefined,
+        "provider",
+      );
+    });
+
+    it("rejects an ordinary tenant role even when the email exists", async () => {
+      const { prisma } = await import("@kannan19302/database");
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+        id: "tnt-provider",
+        slug: "provider",
+      } as never);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: "user-123", tenant_id: "tenant-123" },
+      ] as never);
+      vi.spyOn(authService, "resolveRolesAndPermissions").mockResolvedValue({
+        roles: ["SUPER_ADMIN"],
+        permissions: ["*"],
+      });
+
+      await expect(
+        authService.providerLogin({
+          email: "kannan19302@gmail.com",
+          password: "irrelevant",
+        }),
+      ).rejects.toThrow("Invalid credentials");
     });
   });
 });

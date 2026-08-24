@@ -1370,7 +1370,7 @@ describe("AuthService coverage", () => {
 
   it("updateProfile", async () => {
     try {
-      const result = await service.updateProfile("t1", {});
+      const result = await service.updateProfile("t1", "tenant-1", {});
       expect(result).toBeDefined();
     } catch (e) {
       // Method exercised for coverage even if it throws due to incomplete mocks
