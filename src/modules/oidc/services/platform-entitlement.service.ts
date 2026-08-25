@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { idpPrisma, prisma, runWithTenantSession } from "@kannan19302/database";
+import { CONTROL_PLANE_NAMESPACES } from "@kannan19302/shared";
 import { OAuthError } from "./authorization.service";
 import { OAUTH_ERROR } from "../oidc.constants";
 import { emitAuthAudit } from "../../../common/audit/emit-auth-audit";
@@ -308,7 +309,7 @@ export class PlatformEntitlementService {
   private holdsControlPlaneAuthority(realm: Realm, permissions: string[]): boolean {
     if (realm !== "provider") return false;
     return permissions.some((permission) =>
-      ["system", "platform"].some((namespace) =>
+      CONTROL_PLANE_NAMESPACES.some((namespace) =>
         permission.startsWith(`${namespace}.`),
       ),
     );

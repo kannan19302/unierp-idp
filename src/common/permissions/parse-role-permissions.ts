@@ -20,21 +20,6 @@
  * every writer in two repositories to agree first, and normalising the column
  * later does not break this reader.
  */
-export function parseRolePermissions(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.filter((entry): entry is string => typeof entry === "string");
-  }
-
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed)
-        ? parsed.filter((entry): entry is string => typeof entry === "string")
-        : [];
-    } catch {
-      return [];
-    }
-  }
-
-  return [];
-}
+// Kept as a compatibility import path for Identity call sites while the
+// implementation lives in shared and is consumed by API/PCC/OCC as well.
+export { parseRolePermissions } from "@kannan19302/shared";

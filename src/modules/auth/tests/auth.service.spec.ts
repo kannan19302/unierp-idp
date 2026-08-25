@@ -416,7 +416,7 @@ describe("AuthService", () => {
   });
 
   describe("providerLogin", () => {
-    it("selects an explicitly authorized provider principal across tenant compatibility rows", async () => {
+    it("selects only the explicitly authorized principal in the provider realm", async () => {
       const { prisma } = await import("@kannan19302/database");
       vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
         id: "tnt-provider",
@@ -424,6 +424,7 @@ describe("AuthService", () => {
       } as never);
       vi.mocked(prisma.$queryRaw).mockResolvedValue([
         { id: "user-123", tenant_id: "tenant-123" },
+        { id: "provider-user", tenant_id: "tnt-provider" },
       ] as never);
       vi.spyOn(authService, "resolveRolesAndPermissions").mockResolvedValue({
         roles: ["platform.admin"],
@@ -440,11 +441,40 @@ describe("AuthService", () => {
         }),
       ).resolves.toEqual({ token: "provider-token" });
       expect(authenticate).toHaveBeenCalledWith(
-        "tenant-123",
+        "tnt-provider",
         expect.objectContaining({ email: "kannan19302@gmail.com" }),
         undefined,
         "provider",
       );
+      expect(authService.resolveRolesAndPermissions).toHaveBeenCalledWith(
+        "provider-user",
+        "tnt-provider",
+      );
+    });
+
+    it("rejects a provider role attached to a customer identity row", async () => {
+      const { prisma } = await import("@kannan19302/database");
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+        id: "tnt-provider",
+        slug: "provider",
+      } as never);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: "customer-user", tenant_id: "tenant-123" },
+      ] as never);
+      const resolve = vi
+        .spyOn(authService, "resolveRolesAndPermissions")
+        .mockResolvedValue({
+          roles: ["platform.admin"],
+          permissions: ["pcc.identity-governance.access"],
+        });
+
+      await expect(
+        authService.providerLogin({
+          email: "kannan19302@gmail.com",
+          password: "irrelevant",
+        }),
+      ).rejects.toThrow("Invalid credentials");
+      expect(resolve).not.toHaveBeenCalled();
     });
 
     it("rejects an ordinary tenant role even when the email exists", async () => {

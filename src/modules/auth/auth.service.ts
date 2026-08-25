@@ -31,6 +31,8 @@ import {
   ResetPasswordInput,
   VerifyEmailInput,
   ResendVerificationInput,
+  CONTROL_PLANE_NAMESPACES,
+  PROVIDER_REALM_TENANT_SLUG,
 } from "@kannan19302/shared";
 import {
   generateTotpSecret,
@@ -1237,7 +1239,7 @@ export class AuthService {
     context?: SessionContext,
   ) {
     const tenant = await prisma.tenant.findUnique({
-      where: { slug: "provider" },
+      where: { slug: PROVIDER_REALM_TENANT_SLUG },
     });
     
     if (!tenant) {
@@ -1253,7 +1255,12 @@ export class AuthService {
     // Provider authority is an explicit membership/role assignment. It is not
     // inferred from an email or from the tenant that first created the current
     // compatibility user row.
-    for (const candidate of users) {
+    // A provider token can only be issued from the reserved provider realm.
+    // A provider-looking role on a customer compatibility row is still a
+    // tenant identity and must never cross this boundary.
+    for (const candidate of users.filter(
+      (entry) => entry.tenant_id === tenant.id,
+    )) {
       const authorization = await this.resolveRolesAndPermissions(
         candidate.id,
         candidate.tenant_id,
@@ -1263,7 +1270,9 @@ export class AuthService {
       );
       const concreteProviderPermission = authorization.permissions.some(
         (permission) =>
-          permission.startsWith("system.") || permission.startsWith("platform."),
+          CONTROL_PLANE_NAMESPACES.some((namespace) =>
+            permission.startsWith(`${namespace}.`),
+          ),
       );
       if (providerRole && concreteProviderPermission) {
         return this.authenticateInternal(

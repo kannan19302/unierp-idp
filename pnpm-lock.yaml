@@ -12,20 +12,20 @@ importers:
         specifier: ^3.600.0
         version: 3.1106.0
       '@kannan19302/auth':
-        specifier: ^1.0.4
-        version: 1.0.4(magicast@0.3.5)(typescript@5.9.3)
+        specifier: file:../auth
+        version: file:../auth(magicast@0.3.5)(typescript@5.9.3)
       '@kannan19302/blockchain':
         specifier: ^1.0.3
-        version: 1.0.3(@kannan19302/shared@1.0.5)
+        version: 1.0.3(@kannan19302/shared@file:../shared)
       '@kannan19302/database':
-        specifier: ^1.0.14
-        version: 1.0.14(magicast@0.3.5)(typescript@5.9.3)
+        specifier: file:../data
+        version: file:../data(magicast@0.3.5)(typescript@5.9.3)
       '@kannan19302/service-kit':
         specifier: ^0.2.3
         version: 0.2.3
       '@kannan19302/shared':
-        specifier: ^1.0.5
-        version: 1.0.5
+        specifier: file:../shared
+        version: file:../shared
       '@nestjs/bullmq':
         specifier: ^11.0.4
         version: 11.0.5(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(bullmq@5.81.3)
@@ -684,25 +684,37 @@ packages:
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
 
-  '@kannan19302/auth@1.0.4':
-    resolution: {integrity: sha512-+ZUWyOrbdXS7+1sKmfDZhZBQif7wWkeashqOiYxLzp4jIrjzyAYPOuGUyH5Gpz6zr/998XBtSwsMkb5saaA5pQ==}
+  '@kannan19302/auth@file:../auth':
+    resolution: {directory: ../auth, type: directory}
 
   '@kannan19302/blockchain@1.0.3':
     resolution: {integrity: sha512-OP+sXpYXZmOAj2HTkdNtSfOa3ayt24WrLvT42Hi3TBUFwQMOfUd7LGHt8lxBk/o/h1UcLlHDKl60vmNXSrZOJQ==}
+    version: 1.0.3
     peerDependencies:
       '@kannan19302/shared': ^1.0.5
 
   '@kannan19302/config@1.0.2':
     resolution: {integrity: sha512-mJIQyBTKUduysyrQ1F5KB5+Fd2rjetHllQRDvKEFM3TvSm/7oG0cBsZH4M0Bwa5ifuqWkzJbjotZmYHhfUPeTQ==}
 
+  '@kannan19302/contracts@file:../unierp-contracts':
+    resolution: {directory: ../unierp-contracts, type: directory}
+
   '@kannan19302/database@1.0.14':
     resolution: {integrity: sha512-S/bAFo+AH0RXKr1eAcGVHng2JEQ+FOq7sVa5Wigd/Bm5U33EfvAaUgdYc6PgGMM0gBSO+H2ZcrsQnl6QoXriWQ==}
+
+  '@kannan19302/database@file:../data':
+    resolution: {directory: ../data, type: directory}
 
   '@kannan19302/service-kit@0.2.3':
     resolution: {integrity: sha512-65VyPGCc9yGh/4FyFId45jclnaD0WPIdOwOsaHEcGRbz4hhpkXv28qJRHdanT3DVip3ToJXovZJ8xvAviPU38w==}
 
-  '@kannan19302/shared@1.0.5':
-    resolution: {integrity: sha512-fR9L6yCFnznsQGfEUmHUNZfKX6FS4vu120JVp7KCQ0EyYnaussxM918IA2x4HC1J0EOOORZHK2PwgbKH65607w==}
+  '@kannan19302/shared@file:../shared':
+    resolution: {directory: ../shared, type: directory}
+    peerDependencies:
+      react: ^18.3.1 || ^19.0.0
+    peerDependenciesMeta:
+      react:
+        optional: true
 
   '@levischuck/tiny-cbor@0.2.11':
     resolution: {integrity: sha512-llBRm4dT4Z89aRsm6u2oEZ8tfwL/2l6BwpZ7JcyieouniDECM5AqNgr/y08zalEIvW3RSK4upYyybDcmjXqAow==}
@@ -1487,6 +1499,10 @@ packages:
     resolution: {integrity: sha512-C2Xj8FZ0uHWeCXXqX5B4/gVFQmtSkiuOolzAgutjTfseNOHT3pUjljDZsTSxXFGgio54bCzVFqmEOUrIVk8RDA==}
     engines: {node: '>=20.0.0'}
 
+  '@phc/format@1.0.0':
+    resolution: {integrity: sha512-m7X9U6BG2+J+R1lSOdCiITLLrxm+cWlNI3HUFA92oLO77ObGNzaKdh8pMLqdZcshtkKuV84olNNXDfMc4FezBQ==}
+    engines: {node: '>=10'}
+
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
 
@@ -2096,6 +2112,10 @@ packages:
     resolution: {integrity: sha512-+25nxyyznAXF7Nef3y0EbBeqmGZgeN/BxHX29Rs39djAfaFalmQ89SE6CWyDCHzGL0yt/ycBtNOmGTW0FyGWNw==}
     engines: {node: '>= 10'}
 
+  argon2@0.41.1:
+    resolution: {integrity: sha512-dqCW8kJXke8Ik+McUcMDltrbuAWETPyU6iq+4AhxqKphWi7pChB/Zgd/Tp/o8xRLbg8ksMj46F/vph9wnxpTzQ==}
+    engines: {node: '>=16.17.0'}
+
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
 
@@ -2468,6 +2488,14 @@ packages:
   data-uri-to-buffer@4.0.1:
     resolution: {integrity: sha512-0R9ikRb668HB7QDxT1vkpuUBtqc53YyAwMwGeUFKRojY/NWKvdZ+9UYtRfGmhqNbRkTSVpMbmyhXipFFv2cb/A==}
     engines: {node: '>= 12'}
+
+  date-fns-tz@3.2.0:
+    resolution: {integrity: sha512-sg8HqoTEulcbbbVXeg84u5UnlsQa8GS5QXMqjjYIhS4abEVVKIUwe0/l/UhrZdKaL/W5eWZNlbTeEIiOXTcsBQ==}
+    peerDependencies:
+      date-fns: ^3.0.0 || ^4.0.0
+
+  date-fns@4.4.0:
+    resolution: {integrity: sha512-+1UMbeh68lH1SegH83CGWwpb6OHHbpSgr3+s5Eww5M4CAgswBpoWS0AjTOfEJ33HiYKz1hdj/KTFprzXHmq/6w==}
 
   dayjs@1.11.21:
     resolution: {integrity: sha512-98IT+HOahAisibz/yjKbzuOBwYcjJ7BCLPzARyHiyEBmRz4fatF+KPJszEHXsGYjUG234aH/cOjW1wwTbKUZlA==}
@@ -3309,6 +3337,10 @@ packages:
   node-abort-controller@3.1.1:
     resolution: {integrity: sha512-AGK2yQKIjRuqnc6VkX2Xj5d+QW8xZ87pa1UK6yA6ouUyuxfHuMP6umE5QK7UmTeOAymo+Zx1Fxiuw9rVx8taHQ==}
 
+  node-addon-api@8.9.2:
+    resolution: {integrity: sha512-VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg==}
+    engines: {node: ^18 || ^20 || >= 21}
+
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
     engines: {node: '>=10.5.0'}
@@ -3326,6 +3358,10 @@ packages:
 
   node-gyp-build-optional-packages@5.2.2:
     resolution: {integrity: sha512-s+w+rBWnpTMwSFbaE0UXsRlg7hU4FjekKU4eyAih5T8nJuNZT1nNsskXpxmeqSK9UzkBl6UgRlnKc8hz8IEqOw==}
+    hasBin: true
+
+  node-gyp-build@4.8.4:
+    resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
     hasBin: true
 
   node-releases@2.0.53:
@@ -4928,24 +4964,28 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
-  '@kannan19302/auth@1.0.4(magicast@0.3.5)(typescript@5.9.3)':
+  '@kannan19302/auth@file:../auth(magicast@0.3.5)(typescript@5.9.3)':
     dependencies:
       '@kannan19302/database': 1.0.14(magicast@0.3.5)(typescript@5.9.3)
-      '@kannan19302/shared': 1.0.5
+      '@kannan19302/shared': file:../shared
+      argon2: 0.41.1
       bcryptjs: 2.4.3
       jsonwebtoken: 9.0.3
     transitivePeerDependencies:
       - magicast
+      - react
       - typescript
 
-  '@kannan19302/blockchain@1.0.3(@kannan19302/shared@1.0.5)':
+  '@kannan19302/blockchain@1.0.3(@kannan19302/shared@file:../shared)':
     dependencies:
       '@grpc/grpc-js': 1.14.4
       '@hyperledger/fabric-gateway': 1.12.0
-      '@kannan19302/shared': 1.0.5
+      '@kannan19302/shared': file:../shared
       crypto: 1.0.1
 
   '@kannan19302/config@1.0.2': {}
+
+  '@kannan19302/contracts@file:../unierp-contracts': {}
 
   '@kannan19302/database@1.0.14(magicast@0.3.5)(typescript@5.9.3)':
     dependencies:
@@ -4956,10 +4996,23 @@ snapshots:
       - magicast
       - typescript
 
+  '@kannan19302/database@file:../data(magicast@0.3.5)(typescript@5.9.3)':
+    dependencies:
+      '@prisma/client': 6.19.3(prisma@6.19.3(magicast@0.3.5)(typescript@5.9.3))(typescript@5.9.3)
+      '@prisma/config': 6.19.3(magicast@0.3.5)
+      prisma: 6.19.3(magicast@0.3.5)(typescript@5.9.3)
+    transitivePeerDependencies:
+      - magicast
+      - typescript
+
   '@kannan19302/service-kit@0.2.3': {}
 
-  '@kannan19302/shared@1.0.5':
+  '@kannan19302/shared@file:../shared':
     dependencies:
+      '@kannan19302/contracts': file:../unierp-contracts
+      date-fns: 4.4.0
+      date-fns-tz: 3.2.0(date-fns@4.4.0)
+      jose: 5.10.0
       zod: 3.25.76
 
   '@levischuck/tiny-cbor@0.2.11': {}
@@ -6029,6 +6082,8 @@ snapshots:
       tslib: 2.8.1
       tsyringe: 4.10.0
 
+  '@phc/format@1.0.0': {}
+
   '@pinojs/redact@0.4.0': {}
 
   '@pkgjs/parseargs@0.11.0':
@@ -6696,6 +6751,12 @@ snapshots:
       tar-stream: 2.2.0
       zip-stream: 4.1.1
 
+  argon2@0.41.1:
+    dependencies:
+      '@phc/format': 1.0.0
+      node-addon-api: 8.9.2
+      node-gyp-build: 4.8.4
+
   argparse@2.0.1: {}
 
   array-flatten@1.1.1: {}
@@ -7057,6 +7118,12 @@ snapshots:
   crypto@1.0.1: {}
 
   data-uri-to-buffer@4.0.1: {}
+
+  date-fns-tz@3.2.0(date-fns@4.4.0):
+    dependencies:
+      date-fns: 4.4.0
+
+  date-fns@4.4.0: {}
 
   dayjs@1.11.21: {}
 
@@ -7967,6 +8034,8 @@ snapshots:
 
   node-abort-controller@3.1.1: {}
 
+  node-addon-api@8.9.2: {}
+
   node-domexception@1.0.0: {}
 
   node-emoji@1.11.0:
@@ -7985,6 +8054,8 @@ snapshots:
     dependencies:
       detect-libc: 2.1.2
     optional: true
+
+  node-gyp-build@4.8.4: {}
 
   node-releases@2.0.53: {}
 

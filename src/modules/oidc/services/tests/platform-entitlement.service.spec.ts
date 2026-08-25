@@ -100,6 +100,19 @@ describe("PlatformEntitlementService", () => {
     })).resolves.toBeUndefined();
   });
 
+  it("admits provider staff with canonical PCC-only authority", async () => {
+    vi.mocked(idpPrisma.platform.findUnique).mockResolvedValue(
+      platform({ code: "P2", audience: "INTERNAL", discoverability: "INTERNAL" }) as never,
+    );
+
+    await expect(service.assertMayAccess({
+      ...tenantPrincipal,
+      realm: "provider",
+      permissions: ["pcc.identity-governance.access"],
+      platformCode: "P2",
+    })).resolves.toBeUndefined();
+  });
+
   it("honours a tenant-scoped USER grant", async () => {
     vi.mocked(idpPrisma.platform.findUnique).mockResolvedValue(platform() as never);
     vi.mocked(idpPrisma.platformGrant.findMany).mockResolvedValue([

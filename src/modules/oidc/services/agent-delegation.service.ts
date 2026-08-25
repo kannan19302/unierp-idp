@@ -22,7 +22,7 @@ import { emitAuthAudit } from "../../../common/audit/emit-auth-audit";
  *      registration, so demoting the user immediately demotes every agent
  *      acting on their behalf.
  *   4. The database CHECK constraint (agent_permissions_within_control_plane_bound)
- *      already makes the system.* and platform.* namespaces, and "*", impossible
+ *      already makes the system.*, platform.*, and pcc.* namespaces, and "*", impossible
  *      to register on an agent at all — this service does not re-derive that
  *      guarantee, it inherits it structurally from what can exist in
  *      agent_definitions.
