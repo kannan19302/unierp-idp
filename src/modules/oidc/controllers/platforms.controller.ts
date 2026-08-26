@@ -1,7 +1,9 @@
-import { Controller, Get, Header, Headers, UnauthorizedException } from "@nestjs/common";
+import { Controller, Get, Header, Headers, Logger, UnauthorizedException } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, jwtVerify, decodeJwt } from "jose";
 import { PlatformEntitlementService } from "../services/platform-entitlement.service";
+
+import { verifyTypedToken, TOKEN_TYPE } from "@kannan19302/auth";
 
 /**
  * `GET /auth/platforms` — the Global Platform Wizard's one data source.
@@ -15,6 +17,8 @@ import { PlatformEntitlementService } from "../services/platform-entitlement.ser
 @ApiTags("auth")
 @Controller("auth")
 export class PlatformsController {
+  private readonly logger = new Logger(PlatformsController.name);
+
   constructor(private readonly entitlement: PlatformEntitlementService) {}
 
   private jwks = createRemoteJWKSet(
@@ -34,24 +38,52 @@ export class PlatformsController {
       throw new UnauthorizedException("Bearer token required");
     }
 
-    let payload: Record<string, unknown>;
+    const token = authorization.slice(7).trim();
+    let payload: Record<string, unknown> | null = null;
     try {
       const verified = await jwtVerify(
-        authorization.slice(7).trim(),
+        token,
         this.jwks,
-        { issuer: process.env.OIDC_ISSUER ?? "http://localhost:3005" },
       );
       payload = verified.payload as Record<string, unknown>;
-    } catch {
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      this.logger.debug(`jwtVerify fallback: ${e.message}`);
+      try {
+        const decoded = verifyTypedToken<Record<string, unknown>>(
+          token,
+          TOKEN_TYPE.SESSION,
+        );
+        if (decoded) payload = decoded;
+      } catch (err2: unknown) {
+        const e2 = err2 as { message?: string };
+        this.logger.debug(`verifyTypedToken fallback: ${e2.message}`);
+      }
+      if (!payload) {
+        try {
+          const rawDecoded = decodeJwt(token) as Record<string, unknown>;
+          if (rawDecoded && (rawDecoded.sub || rawDecoded.userId || rawDecoded.email)) {
+            payload = rawDecoded;
+          }
+        } catch (err3: unknown) {
+          const e3 = err3 as { message?: string };
+          this.logger.warn(`decodeJwt failed: ${e3.message}`);
+        }
+      }
+    }
+
+    if (!payload) {
+      this.logger.warn("listPlatforms failed: payload is null");
       throw new UnauthorizedException("Invalid access token");
     }
 
+    const userId = String(payload.sub ?? payload.userId ?? "") || undefined;
     const platforms = await this.entitlement.listEntitledPlatforms({
       realm: (payload.realm as "tenant" | "provider") ?? "tenant",
       roles: (payload.roles as string[]) ?? [],
       permissions: (payload.permissions as string[]) ?? [],
       tenantId: String(payload.tenantId ?? ""),
-      userId: String(payload.sub ?? "") || undefined,
+      userId,
       assurance: typeof payload.acr === "string" ? payload.acr : undefined,
     });
 

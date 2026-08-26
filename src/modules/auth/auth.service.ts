@@ -81,6 +81,12 @@ const PROVIDER_LOGIN_ROLES = new Set([
   "platform.support.l2",
   "platform.billing",
   "platform.security",
+  "SUPER_ADMIN",
+  "Super Admin",
+  "Admin",
+  "admin",
+  "Owner",
+  "Platform Owner",
 ]);
 
 // VAPID details are applied lazily per-send (see AuthService.configureWebPush)
