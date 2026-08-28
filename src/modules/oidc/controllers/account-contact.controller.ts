@@ -16,6 +16,7 @@ import type { Request, Response } from "express";
 import { JwtAuthGuard } from "../../../common/guards/jwt-auth.guard";
 import { AccountContactService } from "../../auth/account-contact.service";
 import { verifyCsrf } from "./login.controller";
+import { Public } from "../../../common/decorators/public.decorator";
 
 type AccountRequest = Request & {
   user?: { userId?: string; tenantId?: string; sid?: string };
@@ -70,6 +71,7 @@ export class AccountContactController {
   }
 
   @Get("verify")
+  @Public("Recovery-contact verification consumes an opaque one-time email token")
   @Header("Cache-Control", "no-store")
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   async verify(@Query("token") token: string, @Res() res: Response) {

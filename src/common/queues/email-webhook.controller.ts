@@ -3,9 +3,11 @@ import { BadRequestException, Controller, Headers, Post, Req, UnauthorizedExcept
 import type { Request } from "express";
 import { EmailDeliveryOperationsService } from "./email-delivery-operations.service";
 import { emailWebhookEvents } from "./email.metrics";
+import { Public } from "../decorators/public.decorator";
 
 type RawRequest = Request & { rawBody?: Buffer };
 
+@Public("Email provider webhooks verify a timestamped signature or shared-secret authentication before ingestion")
 @Controller("email/webhooks")
 export class EmailWebhookController {
   constructor(private readonly operations: EmailDeliveryOperationsService) {}

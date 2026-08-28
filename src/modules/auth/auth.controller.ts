@@ -16,6 +16,7 @@ import {
   HttpStatus,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import { FileInterceptor } from "@nestjs/platform-express";
@@ -29,6 +30,7 @@ import { Request, Response } from "express";
 import { AuthService } from "./auth.service";
 import { ProvisioningService } from "./provisioning.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { Public } from "../../common/decorators/public.decorator";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import {
   registerSchema,
@@ -140,7 +142,13 @@ export class AuthController {
 
   @ApiOperation({ summary: "Get database provisioning progress for a tenant" })
   @Get("provisioning/:tenantId/status")
-  async getProvisioningStatus(@Param("tenantId") tenantId: string) {
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @Permissions("tenant.provisioning.read")
+  async getProvisioningStatus(@Param("tenantId") tenantId: string, @Req() req: Request) {
+    const callerTenantId = (req as Request & { user?: { tenantId?: string } }).user?.tenantId;
+    if (!callerTenantId || callerTenantId !== tenantId) {
+      throw new ForbiddenException("Provisioning status is limited to the current tenant");
+    }
     return this.provisioningService.getProgress(tenantId);
   }
 
@@ -149,6 +157,7 @@ export class AuthController {
   })
   @Throttle({ default: { limit: 20, ttl: 60000 } })
   @Get("check-email")
+  @Public("Rate-limited registration availability check")
   async checkEmail(@Query("email") email: string) {
     const parsed = z.string().email().safeParse(email);
     if (!parsed.success) {
@@ -158,7 +167,7 @@ export class AuthController {
   }
 
   @ApiOperation({ summary: "Register" })
-  @Permissions("auth.create")
+  @Public("Registration validates unauthenticated input and creates the initial account")
   @Post("register")
   @HttpCode(HttpStatus.CREATED)
   async register(
@@ -172,7 +181,7 @@ export class AuthController {
   }
 
   @ApiOperation({ summary: "Login" })
-  @Permissions("auth.create")
+  @Public("Login validates credentials and throttle limits before creating a session")
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post("login")
   @HttpCode(HttpStatus.OK)
@@ -204,7 +213,7 @@ export class AuthController {
   }
 
   @SkipTenantScope()
-  @Permissions("auth.create")
+  @Public("Provider-realm login validates credentials before creating a provider session")
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post("provider/login")
   @HttpCode(HttpStatus.OK)
@@ -234,6 +243,7 @@ export class AuthController {
   @ApiOperation({ summary: "Rotate the refresh token and mint a new session" })
   @Throttle({ default: { limit: 20, ttl: 60000 } })
   @Post("refresh")
+  @Public("Refresh endpoint validates a rotated httpOnly refresh token before creating a session")
   @HttpCode(HttpStatus.OK)
   async refresh(
     @Req() req: Request,
@@ -330,6 +340,7 @@ export class AuthController {
   @ApiOperation({ summary: "Request password reset" })
   @Throttle({ default: { limit: 3, ttl: 60000 } })
   @Post("forgot-password")
+  @Public("Password-recovery request is rate limited and uses an opaque reset token")
   @HttpCode(HttpStatus.OK)
   async forgotPassword(
     @Body(new ZodValidationPipe(forgotPasswordSchema)) dto: ForgotPasswordInput,
@@ -340,6 +351,7 @@ export class AuthController {
   @ApiOperation({ summary: "Verify email address" })
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post("verify-email")
+  @Public("Email verification consumes an opaque verification token")
   @HttpCode(HttpStatus.OK)
   async verifyEmail(
     @Body(new ZodValidationPipe(verifyEmailSchema)) dto: VerifyEmailInput,
@@ -350,6 +362,7 @@ export class AuthController {
   @ApiOperation({ summary: "Resend email verification link" })
   @Throttle({ default: { limit: 3, ttl: 60000 } })
   @Post("resend-verification")
+  @Public("Verification resend is rate limited and does not require an active session")
   @HttpCode(HttpStatus.OK)
   async resendVerification(
     @Body(new ZodValidationPipe(resendVerificationSchema))
@@ -361,6 +374,7 @@ export class AuthController {
   @ApiOperation({ summary: "Reset password" })
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post("reset-password")
+  @Public("Password reset consumes an opaque reset token")
   @HttpCode(HttpStatus.OK)
   async resetPassword(
     @Body(new ZodValidationPipe(resetPasswordSchema)) dto: ResetPasswordInput,
@@ -374,6 +388,7 @@ export class AuthController {
     medium: { limit: 30, ttl: 60000 },
   })
   @Post("login-demo")
+  @Public("Development-only local-host demo endpoint is denied in production")
   @HttpCode(HttpStatus.OK)
   async loginDemo(
     @Req() req: Request,
@@ -529,6 +544,7 @@ export class AuthController {
   @ApiOperation({ summary: "Verify MFA and Login" })
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post("mfa/verify-login")
+  @Public("MFA login completion validates a short-lived challenge before creating a session")
   @HttpCode(HttpStatus.OK)
   async verifyMfaLogin(
     @Body(new ZodValidationPipe(mfaLoginSchema)) body: MfaLoginInput,
@@ -626,6 +642,7 @@ export class AuthController {
   @ApiOperation({ summary: "Poll a pending login's push-approval status" })
   @Throttle({ default: { limit: 60, ttl: 60000 } })
   @Post("mfa/push/status")
+  @Public("MFA push-status polling validates a short-lived challenge and exposes no tenant session data")
   @HttpCode(HttpStatus.OK)
   async mfaPushStatus(
     @ZodBody(z.object({ challengeToken: z.string() }))
@@ -666,6 +683,7 @@ export class AuthController {
   @ApiOperation({ summary: "Send email OTP verification code" })
   @Throttle({ default: { limit: 3, ttl: 60000 } })
   @Post("send-otp")
+  @Public("Email OTP creation is rate limited and the delivered code is the authentication challenge")
   @HttpCode(HttpStatus.OK)
   async sendOtp(@Body(new ZodValidationPipe(sendOtpSchema)) dto: SendOtpInput) {
     return this.authService.sendOtp(dto.email);
@@ -674,6 +692,7 @@ export class AuthController {
   @ApiOperation({ summary: "Verify email OTP code" })
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post("verify-otp")
+  @Public("Email OTP verification validates a one-time code")
   @HttpCode(HttpStatus.OK)
   async verifyOtp(
     @Body(new ZodValidationPipe(verifyOtpSchema)) dto: VerifyOtpInput,

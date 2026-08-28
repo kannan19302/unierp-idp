@@ -22,6 +22,7 @@ import {
   SCOPE,
   TOKEN_TTL,
 } from "../oidc.constants";
+import { Public } from "../../../common/decorators/public.decorator";
 
 interface TokenRequestBody {
   grant_type?: string;
@@ -63,6 +64,7 @@ export class TokenController {
   ) {}
 
   @ApiOperation({ summary: "OAuth 2.0 token endpoint" })
+  @Public("OIDC token endpoint performs registered-client authentication and grant validation internally")
   @Post("token")
   @HttpCode(HttpStatus.OK)
   // Tokens must never be cached by an intermediary. RFC 6749 §5.1 requires it.

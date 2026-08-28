@@ -20,6 +20,7 @@ import {
 } from "../../auth/oauth.service";
 import { idpPrisma, runWithTenantSession } from "@kannan19302/database";
 import { JwtAuthGuard } from "../../../common/guards/jwt-auth.guard";
+import { Public } from "../../../common/decorators/public.decorator";
 import { getRegistrationLegalConfig } from "../../../common/legal/legal-document.config";
 import { getPlatformNavigationConfig } from "../../../common/navigation/platform-navigation.config";
 import {
@@ -377,6 +378,7 @@ export class LoginController {
   // ── 1. SIGN IN ──────────────────────────────────────────────────────────
 
   @Get("login")
+  @Public("Hosted sign-in form creates only a CSRF token before credential verification")
   @Header("Cache-Control", "no-store")
   async loginForm(
     @Req() req: Request,
@@ -399,6 +401,7 @@ export class LoginController {
   }
 
   @Post("login")
+  @Public("Hosted sign-in validates credentials, CSRF and throttling before creating a session")
   @Header("Cache-Control", "no-store")
   async submitLogin(
     @Body() body: Record<string, string>,
@@ -490,6 +493,7 @@ export class LoginController {
   // ── 2. MULTI-FACTOR AUTHENTICATION (MFA / 2FA) ──────────────────────────
 
   @Post("login/mfa")
+  @Public("MFA completion validates a short-lived challenge and CSRF before creating a session")
   @Header("Cache-Control", "no-store")
   async submitMfa(
     @Body() body: Record<string, string>,
@@ -553,6 +557,7 @@ export class LoginController {
   // ── 3. ORGANIZATION REGISTRATION ────────────────────────────────────────
 
   @Get("register")
+  @Public("Hosted registration form creates only a CSRF token and uses rate-limited public registration")
   @Header("Cache-Control", "no-store")
   async registerForm(
     @Req() req: Request,
@@ -586,6 +591,7 @@ export class LoginController {
   }
 
   @Post("register")
+  @Public("Registration validates CSRF, legal acceptance and input before creating a tenant account")
   @Header("Cache-Control", "no-store")
   async submitRegister(
     @Body() body: Record<string, string>,
@@ -708,6 +714,7 @@ export class LoginController {
   // ── 4. FORGOT PASSWORD & RECOVERY ────────────────────────────────────────
 
   @Get("forgot-password")
+  @Public("Password-recovery form creates only a CSRF token")
   @Header("Cache-Control", "no-store")
   forgotPasswordForm(
     @Req() req: Request,
@@ -726,6 +733,7 @@ export class LoginController {
   }
 
   @Post("forgot-password")
+  @Public("Password recovery is rate limited and sends an opaque one-time reset token")
   @Header("Cache-Control", "no-store")
   async submitForgotPassword(
     @Body() body: Record<string, string>,
@@ -782,6 +790,7 @@ export class LoginController {
   // ── 5. RESET PASSWORD ───────────────────────────────────────────────────
 
   @Get("reset-password")
+  @Public("Password-reset form requires an opaque one-time reset token")
   @Header("Cache-Control", "no-store")
   resetPasswordForm(
     @Req() req: Request,
@@ -800,6 +809,7 @@ export class LoginController {
   }
 
   @Post("reset-password")
+  @Public("Password reset consumes an opaque one-time reset token with CSRF validation")
   @Header("Cache-Control", "no-store")
   async submitResetPassword(
     @Body() body: Record<string, string>,
@@ -878,6 +888,7 @@ export class LoginController {
   // ── 6. EMAIL VERIFICATION ───────────────────────────────────────────────
 
   @Get("verify-email")
+  @Public("Email verification consumes an opaque one-time verification token")
   @Header("Cache-Control", "no-store")
   async verifyEmailPage(
     @Req() req: Request,
@@ -917,6 +928,7 @@ export class LoginController {
   }
 
   @Post("verify-email/resend")
+  @Public("Email-verification resend is rate limited and does not require an existing session")
   @Header("Cache-Control", "no-store")
   async resendEmailVerification(
     @Body() body: Record<string, string>,

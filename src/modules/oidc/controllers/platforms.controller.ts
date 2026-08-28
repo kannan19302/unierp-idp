@@ -1,9 +1,10 @@
 import { Controller, Get, Header, Headers, Logger, UnauthorizedException } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import { createRemoteJWKSet, jwtVerify, decodeJwt } from "jose";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import { PlatformEntitlementService } from "../services/platform-entitlement.service";
 
 import { verifyTypedToken, TOKEN_TYPE } from "@kannan19302/auth";
+import { Public } from "../../../common/decorators/public.decorator";
 
 /**
  * `GET /auth/platforms` — the Global Platform Wizard's one data source.
@@ -28,6 +29,7 @@ export class PlatformsController {
   );
 
   @ApiOperation({ summary: "Platforms entitled to the current session" })
+  @Public("Platform entitlement requires a verified bearer or legacy typed session token in the handler")
   @Get("platforms")
   @Header("Cache-Control", "no-store")
   async listPlatforms(
@@ -58,17 +60,6 @@ export class PlatformsController {
       } catch (err2: unknown) {
         const e2 = err2 as { message?: string };
         this.logger.debug(`verifyTypedToken fallback: ${e2.message}`);
-      }
-      if (!payload) {
-        try {
-          const rawDecoded = decodeJwt(token) as Record<string, unknown>;
-          if (rawDecoded && (rawDecoded.sub || rawDecoded.userId || rawDecoded.email)) {
-            payload = rawDecoded;
-          }
-        } catch (err3: unknown) {
-          const e3 = err3 as { message?: string };
-          this.logger.warn(`decodeJwt failed: ${e3.message}`);
-        }
       }
     }
 

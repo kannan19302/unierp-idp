@@ -17,6 +17,7 @@ import type {
   RegistrationResponseJSON,
 } from "@simplewebauthn/server";
 import { JwtAuthGuard } from "../../../common/guards/jwt-auth.guard";
+import { Public } from "../../../common/decorators/public.decorator";
 import { PasskeyService } from "../../auth/passkey.service";
 import {
   safeReturnTo,
@@ -69,6 +70,7 @@ export class PasskeyController {
   }
 
   @Post("authentication/options")
+  @Public("Passkey authentication option creation validates the browser CSRF token and issues a one-time challenge")
   @Header("Cache-Control", "no-store")
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   async authenticationOptions(
@@ -82,6 +84,7 @@ export class PasskeyController {
   }
 
   @Post("authentication/verify")
+  @Public("Passkey authentication validates an assertion and one-time challenge before issuing a session")
   @Header("Cache-Control", "no-store")
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async verifyAuthentication(

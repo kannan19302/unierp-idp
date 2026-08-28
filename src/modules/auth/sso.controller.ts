@@ -13,6 +13,7 @@ import { ApiExcludeController } from "@nestjs/swagger";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { SsoService } from "./sso.service";
 import { setSessionCookies } from "../oidc/controllers/login.controller";
+import { Public } from "../../common/decorators/public.decorator";
 
 /**
  * Tenant-level inbound SSO federation: a tenant's OWN external IdP (SAML or
@@ -33,6 +34,7 @@ import { setSessionCookies } from "../oidc/controllers/login.controller";
  * trusting anything handed to us by the browser.
  */
 @ApiExcludeController()
+@Public("Inbound SSO browser endpoints validate federation state and assertions before issuing a session")
 @Controller("auth/sso")
 export class SsoController {
   constructor(private readonly ssoService: SsoService) {}

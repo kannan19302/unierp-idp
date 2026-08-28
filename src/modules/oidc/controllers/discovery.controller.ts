@@ -1,6 +1,7 @@
 import { Controller, Get, Header } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { SigningKeyService } from "../services/signing-key.service";
+import { Public } from "../../../common/decorators/public.decorator";
 import {
   ALL_SCOPES,
   GRANT_TYPE,
@@ -30,6 +31,7 @@ export class DiscoveryController {
   }
 
   @ApiOperation({ summary: "OpenID Connect discovery document" })
+  @Public("OIDC discovery must be available before a relying party holds credentials")
   @Get(".well-known/openid-configuration")
   // Cacheable, but not for long: rotating a key or adding a grant type should
   // reach clients in minutes rather than whenever they happen to restart.
@@ -94,6 +96,7 @@ export class DiscoveryController {
   }
 
   @ApiOperation({ summary: "JSON Web Key Set (public signing keys)" })
+  @Public("OIDC JWKS exposes only public signing keys and is required for token verification")
   @Get("oidc/jwks.json")
   @Header("Cache-Control", "public, max-age=300")
   async jwks() {

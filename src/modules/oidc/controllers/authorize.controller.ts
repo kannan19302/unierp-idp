@@ -14,6 +14,7 @@ import { AuthorizationService, OAuthError } from "../services/authorization.serv
 import { OidcClientService } from "../services/oidc-client.service";
 import { PlatformEntitlementService } from "../services/platform-entitlement.service";
 import { OAUTH_ERROR, PKCE_METHOD_S256 } from "../oidc.constants";
+import { Public } from "../../../common/decorators/public.decorator";
 
 const AUTH_COOKIE = "auth_token";
 
@@ -52,6 +53,7 @@ export class AuthorizeController {
   ) {}
 
   @ApiOperation({ summary: "OAuth 2.0 / OIDC authorization endpoint" })
+  @Public("OIDC authorization begins a browser flow and validates client, redirect URI, PKCE and session itself")
   @Get("authorize")
   async authorize(
     @Query() query: AuthorizeQuery,

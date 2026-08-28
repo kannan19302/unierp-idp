@@ -2206,7 +2206,7 @@ describe("SsoService coverage", () => {
   let service: SsoService;
 
   beforeEach(() => {
-    service = new SsoService();
+    service = new SsoService({} as never, {} as never);
     vi.clearAllMocks();
   });
 

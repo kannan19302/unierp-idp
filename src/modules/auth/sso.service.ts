@@ -6,10 +6,12 @@ import {
   UnauthorizedException,
   Logger,
 } from "@nestjs/common";
+import { createHash, randomBytes } from "node:crypto";
 import { SAML } from "@node-saml/node-saml";
 import { idpPrisma, prisma, runWithTenantSession } from "@kannan19302/database";
-import { signTypedToken, verifyTypedToken, TOKEN_TYPE } from "@kannan19302/auth";
+import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import { AuthService, SessionContext } from "./auth.service";
+import { ExternalAuthStore } from "./external-auth.store";
 import { assertSsoFederationEnabled } from "./sso-plan-gate";
 
 interface SsoProfile {
@@ -19,8 +21,15 @@ interface SsoProfile {
   provider: "SAML" | "OIDC";
 }
 
-/** How long the signed OIDC federation `state` stays valid. */
-const OIDC_STATE_TTL = "10m";
+const OIDC_ALLOWED_SIGNING_ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"];
+
+interface OidcDiscoveryDocument {
+  issuer: string;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  jwks_uri: string;
+  id_token_signing_alg_values_supported?: string[];
+}
 
 /**
  * Inbound SSO federation: a TENANT'S OWN external IdP (their Okta, their
@@ -36,8 +45,12 @@ const OIDC_STATE_TTL = "10m";
 @Injectable()
 export class SsoService {
   private readonly logger = new Logger(SsoService.name);
+  private readonly jwks = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly externalAuthStore: ExternalAuthStore,
+  ) {}
 
   private get idpPublicUrl(): string {
     return process.env.OIDC_ISSUER ?? "http://localhost:3005";
@@ -173,27 +186,27 @@ export class SsoService {
 
   // ── OIDC ──────────────────────────────────────────────────────────────
   //
-  // Deliberately mirrors oauth.service.ts's Google/Microsoft flow rather
-  // than adding an OIDC client library: the code exchange happens over a
-  // direct server-to-server HTTPS request to the tenant's OWN configured
-  // token endpoint, which is the same trust boundary oauth.service.ts
-  // already relies on to skip a separate id_token signature check — the
-  // token arrives straight from the issuer over TLS, with no third party in
-  // that hop, unlike a SAML assertion which transits the user's browser.
+  // The browser receives only an opaque, one-time state handle. Endpoint
+  // trust is obtained from the configured issuer's discovery document, not
+  // from arbitrary tenant-entered callback URLs.
 
   async buildOidcLoginUrl(tenantSlug: string, returnTo: string): Promise<string> {
     const tenant = await this.requireTenant(tenantSlug);
     await assertSsoFederationEnabled(tenant.id);
     const config = await this.requireConfig(tenant.id, "OIDC");
-    if (!config.authorizationUrl || !config.clientId) {
+    if (!config.clientId) {
       throw new BadRequestException("OIDC configuration is incomplete for this organization.");
     }
-
-    const state = signTypedToken(
-      TOKEN_TYPE.OAUTH_STATE,
-      { tenantSlug, returnTo },
-      OIDC_STATE_TTL,
-    );
+    const discovered = await this.discoverOidcConfiguration(config);
+    const nonce = randomBytes(24).toString("base64url");
+    const codeVerifier = randomBytes(48).toString("base64url");
+    const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+    const state = await this.externalAuthStore.createFederationTransaction({
+      tenantSlug,
+      returnTo,
+      nonce,
+      codeVerifier,
+    });
 
     const params = new URLSearchParams({
       client_id: config.clientId,
@@ -201,8 +214,11 @@ export class SsoService {
       response_type: "code",
       scope: "openid email profile",
       state,
+      nonce,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
     });
-    return `${config.authorizationUrl}?${params.toString()}`;
+    return `${discovered.authorization_endpoint}?${params.toString()}`;
   }
 
   async handleOidcCallback(
@@ -211,36 +227,34 @@ export class SsoService {
     state: string,
     context?: SessionContext,
   ) {
-    const decoded = verifyTypedToken<{ tenantSlug: string; returnTo?: string }>(
-      state,
-      TOKEN_TYPE.OAUTH_STATE,
-    );
-    if (!decoded || decoded.tenantSlug !== tenantSlug) {
+    const transaction = await this.externalAuthStore.consumeFederationTransaction(state);
+    if (!transaction || transaction.tenantSlug !== tenantSlug) {
       throw new UnauthorizedException("Invalid or expired sign-in state.");
     }
 
     const tenant = await this.requireTenant(tenantSlug);
     await assertSsoFederationEnabled(tenant.id);
     const config = await this.requireConfig(tenant.id, "OIDC");
-    if (!config.tokenUrl || !config.clientId) {
+    if (!config.clientId || !code || code.length > 4096) {
       throw new BadRequestException("OIDC configuration is incomplete for this organization.");
     }
+    const discovered = await this.discoverOidcConfiguration(config);
 
-    const tokenRes = await fetch(config.tokenUrl, {
+    const tokenRes = await fetch(discovered.token_endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_id: config.clientId,
         ...(config.clientSecret ? { client_secret: config.clientSecret } : {}),
         code,
+        code_verifier: transaction.codeVerifier,
         grant_type: "authorization_code",
         redirect_uri: this.oidcCallbackUrl(tenantSlug),
       }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!tokenRes.ok) {
-      this.logger.warn(
-        `[sso] OIDC code exchange failed for tenant ${tenantSlug}: ${tokenRes.status} ${await tokenRes.text().catch(() => "")}`,
-      );
+      this.logger.warn(`[sso] OIDC code exchange failed for tenant ${tenantSlug}: ${tokenRes.status}`);
       throw new UnauthorizedException("Sign-in could not be completed.");
     }
     const tokens = (await tokenRes.json()) as { id_token?: string };
@@ -248,13 +262,16 @@ export class SsoService {
       throw new UnauthorizedException("Identity provider returned no identity token.");
     }
 
-    const claims = JSON.parse(
-      Buffer.from(tokens.id_token.split(".")[1] ?? "", "base64url").toString("utf8"),
-    ) as Record<string, unknown>;
+    const claims = await this.verifyOidcToken(
+      tokens.id_token,
+      config.clientId,
+      transaction.nonce,
+      discovered,
+    );
 
-    const email = String(claims.email ?? claims.preferred_username ?? "").toLowerCase();
-    if (!email || !email.includes("@")) {
-      throw new UnauthorizedException("Your identity provider did not supply an email address.");
+    const email = String(claims.email ?? "").toLowerCase();
+    if (!email || !email.includes("@") || claims.email_verified !== true) {
+      throw new UnauthorizedException("Your identity provider did not supply a verified email address.");
     }
 
     const name = String(claims.name ?? "");
@@ -267,8 +284,94 @@ export class SsoService {
 
     return {
       session: await this.authService.issueSession(user, context, { realm: "tenant" }),
-      returnTo: decoded.returnTo,
+      returnTo: transaction.returnTo,
     };
+  }
+
+  private async discoverOidcConfiguration(config: {
+    issuerUrl: string | null;
+  }): Promise<OidcDiscoveryDocument> {
+    const issuer = requirePublicHttpsUrl(config.issuerUrl, "OIDC issuer");
+    const discoveryUrl = new URL(`${normalizeIssuer(issuer)}/.well-known/openid-configuration`);
+    let response: Response;
+    try {
+      response = await fetch(discoveryUrl, { signal: AbortSignal.timeout(10_000) });
+    } catch {
+      throw new UnauthorizedException("Identity provider metadata is unavailable.");
+    }
+    if (!response.ok) {
+      this.logger.warn(`[sso] OIDC discovery failed for issuer ${issuer.origin}: ${response.status}`);
+      throw new UnauthorizedException("Identity provider metadata is unavailable.");
+    }
+
+    let metadata: OidcDiscoveryDocument;
+    try {
+      metadata = await response.json() as OidcDiscoveryDocument;
+    } catch {
+      throw new UnauthorizedException("Identity provider metadata is invalid.");
+    }
+    if (metadata.issuer !== normalizeIssuer(issuer)) {
+      throw new UnauthorizedException("Identity provider issuer does not match the configured issuer.");
+    }
+    for (const [label, endpoint] of Object.entries({
+      authorization: metadata.authorization_endpoint,
+      token: metadata.token_endpoint,
+      JWKS: metadata.jwks_uri,
+    })) {
+      // OIDC discovery is authoritative for endpoint placement. Some valid
+      // issuers (for example hosted providers) publish JWKS on a separate
+      // origin, so same-origin enforcement would break conformant providers.
+      // Each discovered endpoint is still syntactically constrained here and
+      // production egress policy supplies the network-level SSRF boundary.
+      requirePublicHttpsUrl(endpoint, `OIDC ${label} endpoint`);
+    }
+    return metadata;
+  }
+
+  private async verifyOidcToken(
+    idToken: string,
+    clientId: string,
+    nonce: string,
+    discovery: OidcDiscoveryDocument,
+  ): Promise<JWTPayload> {
+    const algorithms = discovery.id_token_signing_alg_values_supported
+      ?.filter((algorithm) => OIDC_ALLOWED_SIGNING_ALGORITHMS.includes(algorithm)) ?? [];
+    if (algorithms.length === 0) {
+      throw new UnauthorizedException("Identity provider does not advertise a supported signing algorithm.");
+    }
+    try {
+      const verified = await jwtVerify(idToken, this.keySetFor(discovery.jwks_uri), {
+        algorithms,
+        issuer: discovery.issuer,
+        audience: clientId,
+        maxTokenAge: "5m",
+        clockTolerance: 30,
+      });
+      const audience = verified.payload.aud;
+      if (Array.isArray(audience) && verified.payload.azp !== clientId) {
+        throw new UnauthorizedException("Identity response authorized party is invalid.");
+      }
+      if (verified.payload.nonce !== nonce) {
+        throw new UnauthorizedException("Identity response nonce is invalid.");
+      }
+      return verified.payload;
+    } catch (error) {
+      if (error instanceof UnauthorizedException) throw error;
+      this.logger.warn(`[sso] OIDC ID token verification failed: ${error instanceof Error ? error.message : "unknown verification error"}`);
+      throw new UnauthorizedException("Identity response could not be verified.");
+    }
+  }
+
+  private keySetFor(jwksUrl: string) {
+    const cached = this.jwks.get(jwksUrl);
+    if (cached) return cached;
+    const keySet = createRemoteJWKSet(requirePublicHttpsUrl(jwksUrl, "OIDC JWKS endpoint"), {
+      timeoutDuration: 5_000,
+      cooldownDuration: 30_000,
+      cacheMaxAge: 10 * 60_000,
+    });
+    this.jwks.set(jwksUrl, keySet);
+    return keySet;
   }
 
   // ── Shared JIT provisioning ──────────────────────────────────────────
@@ -316,4 +419,39 @@ export class SsoService {
     // absent — no need to preload it here.
     return user;
   }
+}
+
+function requirePublicHttpsUrl(value: string | null | undefined, label: string): URL {
+  if (!value || value.length > 2048) {
+    throw new BadRequestException(`${label} is required and must be a valid HTTPS URL.`);
+  }
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new BadRequestException(`${label} must be a valid HTTPS URL.`);
+  }
+  const host = url.hostname.toLowerCase();
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    isPrivateIpAddress(host)
+  ) {
+    throw new BadRequestException(`${label} must be a public HTTPS URL.`);
+  }
+  return url;
+}
+
+function normalizeIssuer(url: URL): string {
+  return url.toString().replace(/\/$/, "");
+}
+
+function isPrivateIpAddress(host: string): boolean {
+  if (/^127\./.test(host) || /^10\./.test(host) || /^0\./.test(host)) return true;
+  if (/^192\.168\./.test(host) || /^169\.254\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+  return host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
 }

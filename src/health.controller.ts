@@ -11,6 +11,7 @@ import { IDENTITY_EMAIL_QUEUE } from "./common/queues/queue.constants";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { idpPrisma, prisma } from "@kannan19302/database";
 import { EmailDeliveryOperationsService } from "./common/queues/email-delivery-operations.service";
+import { Public } from "./common/decorators/public.decorator";
 
 type CheckStatus = "up" | "down";
 
@@ -36,6 +37,7 @@ export class HealthController {
   ) {}
 
   @Get("health")
+  @Public("Liveness exposes no tenant or dependency data and is required by the orchestrator")
   @ApiOperation({ summary: "Liveness probe — process is up" })
   check() {
     return {
@@ -47,6 +49,7 @@ export class HealthController {
   }
 
   @Get("ready")
+  @Public("Readiness exposes only service availability for the orchestrator; dependency diagnostics stay internal")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Readiness probe — dependencies are reachable" })
   async ready() {
@@ -61,10 +64,10 @@ export class HealthController {
 
     if (!allUp) {
       // 503 so orchestrators (k8s, load balancers) stop routing traffic.
-      throw new ServiceUnavailableException({ status: "unavailable", checks });
+      throw new ServiceUnavailableException({ status: "unavailable" });
     }
 
-    return { status: "ready", checks };
+    return { status: "ready" };
   }
 
   private async checkDatabase(): Promise<DependencyCheck> {

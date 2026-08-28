@@ -16,6 +16,14 @@ export interface ExternalAuthTransaction {
   linkTenantId?: string;
 }
 
+/** One-time inbound tenant federation callback binding. */
+export interface FederationTransaction {
+  tenantSlug: string;
+  returnTo: string;
+  nonce: string;
+  codeVerifier: string;
+}
+
 export interface ExternalRegistrationProfile {
   provider: ExternalAuthProvider;
   subject: string;
@@ -78,6 +86,16 @@ export class ExternalAuthStore implements OnModuleDestroy {
     handle: string,
   ): Promise<ExternalAuthTransaction | null> {
     return this.consume<ExternalAuthTransaction>("transaction", handle);
+  }
+
+  async createFederationTransaction(value: FederationTransaction): Promise<string> {
+    return this.create("federation", value, TRANSACTION_TTL_SECONDS);
+  }
+
+  async consumeFederationTransaction(
+    handle: string,
+  ): Promise<FederationTransaction | null> {
+    return this.consume<FederationTransaction>("federation", handle);
   }
 
   async createRegistration(

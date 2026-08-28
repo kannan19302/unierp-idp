@@ -14,6 +14,7 @@ import { Request, Response } from "express";
 import { OAuthService, OAuthProviderName } from "./oauth.service";
 import type { ExternalAuthJourney } from "./external-auth.store";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { Public } from "../../common/decorators/public.decorator";
 
 const AUTH_COOKIE = "auth_token";
 const REFRESH_COOKIE = "refresh_token";
@@ -47,12 +48,14 @@ export class OAuthController {
   constructor(private readonly oauthService: OAuthService) {}
 
   @ApiOperation({ summary: "List configured OAuth providers" })
+  @Public("Authentication provider discovery contains no tenant session data")
   @Get("providers")
   async listProviders(@Query("journey") journeyParam?: string) {
     return this.oauthService.listProviders(assertJourney(journeyParam));
   }
 
   @ApiOperation({ summary: "Start OAuth sign-in (302 to the provider)" })
+  @Public("OAuth sign-in initiation creates and later validates a server-side state transaction")
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Get(":provider/start")
   async start(
@@ -102,6 +105,7 @@ export class OAuthController {
   }
 
   @ApiOperation({ summary: "OAuth provider callback (302 back to the app)" })
+  @Public("OAuth callback validates the provider response against the one-time server-side state transaction")
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Get(":provider/callback")
   async callback(

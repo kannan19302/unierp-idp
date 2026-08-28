@@ -11,6 +11,7 @@ import {
   Req,
   Res,
   UnauthorizedException,
+  UseGuards,
 } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { ApiExcludeController, ApiOperation, ApiTags } from "@nestjs/swagger";
@@ -21,6 +22,9 @@ import { OidcTokenService } from "../services/oidc-token.service";
 import { AuthorizationService } from "../services/authorization.service";
 import { safeReturnTo } from "./login.controller";
 import { emitAuthAudit } from "../../../common/audit/emit-auth-audit";
+import { Public } from "../../../common/decorators/public.decorator";
+import { JwtAuthGuard } from "../../../common/guards/jwt-auth.guard";
+import { verifyBearerToken } from "../../../common/guards/verify-bearer-token";
 
 const AUTH_COOKIE = "auth_token";
 const REFRESH_COOKIE = "refresh_token";
@@ -53,6 +57,7 @@ export class SessionController {
    * token happens to expire.
    */
   @ApiOperation({ summary: "OIDC userinfo" })
+  @Public("OIDC userinfo validates a bearer access token and active session in the handler")
   @Get("userinfo")
   @Header("Cache-Control", "no-store")
   async userinfo(@Headers("authorization") authorization?: string) {
@@ -130,6 +135,7 @@ export class SessionController {
    * test whether a captured string is a live token.
    */
   @ApiOperation({ summary: "Token revocation" })
+  @Public("RFC 7009 revocation intentionally returns no token-state information")
   @Post("revoke")
   @HttpCode(HttpStatus.OK)
   @Header("Cache-Control", "no-store")
@@ -146,6 +152,7 @@ export class SessionController {
    * is a valid token, and what authority it carries.
    */
   @ApiOperation({ summary: "Token introspection" })
+  @Public("OIDC introspection authenticates a confidential client before returning token state")
   @Post("introspect")
   @HttpCode(HttpStatus.OK)
   @Header("Cache-Control", "no-store")
@@ -200,6 +207,7 @@ export class SessionController {
    * single sign-on run in reverse.
    */
   @ApiOperation({ summary: "RP-initiated logout" })
+  @Public("OIDC logout clears browser cookies; server-side revocation requires a verified session token")
   @Get("end_session")
   @Header("Cache-Control", "no-store")
   async endSession(
@@ -213,7 +221,7 @@ export class SessionController {
     const token = cookies?.[AUTH_COOKIE];
 
     if (token) {
-      const claims = readClaimsUnverified(token);
+      const claims = await verifyBearerToken(token);
       const sid = claims?.sid ?? null;
       if (sid) {
         // Deactivate the session and revoke every grant derived from it.
@@ -224,13 +232,9 @@ export class SessionController {
         // server-side session live for the rest of its lifetime, which is the
         // one thing logout exists to prevent.
         //
-        // The tenantId here is read WITHOUT verifying the signature, as `sid`
-        // already was: logout must still work for a token that has expired or
-        // been tampered with, and refusing to sign someone out is a worse
-        // outcome than honouring a malformed request. It grants nothing — the
-        // context only widens visibility to that one tenant, and the row must
-        // still match `sid`, so a forged tenantId cannot revoke a session the
-        // caller could not already name.
+        // Never derive the tenant context or session id from unverified cookie
+        // claims. An expired or forged cookie still clears the local browser,
+        // but it cannot revoke another user's server-side session.
         await runWithTenantSession(
           { tenantId: claims?.tenantId ?? "", userId: claims?.userId ?? "" },
           () =>
@@ -269,6 +273,7 @@ export class SessionController {
  */
 @ApiExcludeController()
 @Controller("oidc")
+@UseGuards(JwtAuthGuard)
 export class ConsentController {
   constructor(private readonly clients: OidcClientService) {}
 
@@ -295,12 +300,11 @@ export class ConsentController {
     @Res() res: Response,
   ): Promise<void> {
     const returnTo = safeReturnTo(body.return_to);
-    const cookies = (req as unknown as { cookies?: Record<string, string> })
-      .cookies;
-    const token = cookies?.[AUTH_COOKIE];
-    const claims = token ? readClaimsUnverified(token) : null;
-    const userId = claims?.userId;
-    const tenantId = claims?.tenantId;
+    const principal = (req as Request & {
+      user?: { userId?: string; tenantId?: string };
+    }).user;
+    const userId = principal?.userId;
+    const tenantId = principal?.tenantId;
 
     const clientId = body.client_id;
     if (!clientId) {
@@ -338,26 +342,6 @@ export class ConsentController {
     });
 
     res.redirect(returnTo);
-  }
-}
-
-/**
- * Reads `sid` from a session cookie WITHOUT verifying the signature.
- *
- * Safe only because of what it is used for: ending a session. The worst a
- * forged cookie achieves is logging out a session id the attacker already knew,
- * which is not an escalation — and requiring a valid signature here would mean
- * an expired cookie could never be used to clean up its own session.
- */
-function readClaimsUnverified(
-  token: string,
-): { sid?: string; userId?: string; tenantId?: string } | null {
-  try {
-    const [, payload] = token.split(".");
-    if (!payload) return null;
-    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-  } catch {
-    return null;
   }
 }
 
