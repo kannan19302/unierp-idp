@@ -31,6 +31,7 @@ vi.mock("../../../common/guards/jwt-auth.guard", () => ({
   JwtAuthGuard: class JwtAuthGuard {},
 }));
 
+import { idpPrisma } from "@kannan19302/database";
 import { LoginController } from "./login.controller";
 import type { AuthService } from "../../auth/auth.service";
 import type { OAuthService } from "../../auth/oauth.service";
@@ -73,6 +74,12 @@ describe("hosted identity provider buttons", () => {
     expect(html).not.toContain("initSlider");
     expect(html).toContain("Create a free-trial workspace");
     expect(html).toContain("Sign in with a passkey");
+    expect(html).toContain("Secure identity");
+    expect(html).toContain("auth-container--login");
+    expect(html).not.toContain("Sign-in scope");
+    expect(html).not.toContain('name="login_scope"');
+    expect(html).not.toContain("Organization slug");
+    expect(html).not.toContain('name="tenant_slug"');
     expect(html).toContain('<a class="skip-link" href="#main-content">');
     expect(html).toContain('<main id="main-content">');
     expect(html).not.toMatch(/\son(?:click|change|input)=/i);
@@ -96,7 +103,7 @@ describe("hosted identity provider buttons", () => {
     expect(html).not.toContain("Continue with GitHub");
   });
 
-  it("routes an explicitly selected provider scope through provider authentication", async () => {
+  it("derives provider scope from the internal relying party", async () => {
     const auth = {
       providerLogin: vi.fn().mockResolvedValue({ token: "access", refreshToken: "refresh" }),
       login: vi.fn(),
@@ -105,6 +112,12 @@ describe("hosted identity provider buttons", () => {
       listProviders: vi.fn().mockResolvedValue({ providers: [] }),
     } as unknown as OAuthService;
     const controller = new LoginController(auth, oauth);
+    vi.mocked(idpPrisma.oAuthClient.findUnique).mockResolvedValueOnce({
+      platformCode: "P2",
+    } as never);
+    vi.mocked(idpPrisma.platform.findUnique).mockResolvedValueOnce({
+      audience: "INTERNAL",
+    } as never);
     const csrf = "a".repeat(32);
     const res = {
       cookie: vi.fn(),
@@ -116,10 +129,10 @@ describe("hosted identity provider buttons", () => {
     await controller.submitLogin(
       {
         _csrf: csrf,
-        return_to: "/",
-        email: "kannan19302@gmail.com",
+        return_to: "/oidc/authorize?client_id=provider-admin",
+        email: "operator@example.test",
         password: "secret",
-        login_scope: "provider",
+        login_scope: "tenant",
       },
       {
         ...requestStub(),
@@ -132,6 +145,56 @@ describe("hosted identity provider buttons", () => {
 
     expect(auth.providerLogin).toHaveBeenCalledOnce();
     expect(auth.login).not.toHaveBeenCalled();
+    expect(res.redirect).toHaveBeenCalledWith(
+      302,
+      "/oidc/authorize?client_id=provider-admin",
+    );
+  });
+
+  it("ignores hostile scope and organization fields for tenant sign-in", async () => {
+    const auth = {
+      providerLogin: vi.fn(),
+      login: vi.fn().mockResolvedValue({ token: "access", refreshToken: "refresh" }),
+    } as unknown as AuthService;
+    const oauth = {
+      listProviders: vi.fn().mockResolvedValue({ providers: [] }),
+    } as unknown as OAuthService;
+    const controller = new LoginController(auth, oauth);
+    const csrf = "b".repeat(32);
+    const res = {
+      cookie: vi.fn(),
+      redirect: vi.fn(),
+      status: vi.fn().mockReturnThis(),
+      send: vi.fn(),
+    } as unknown as Response;
+
+    await controller.submitLogin(
+      {
+        _csrf: csrf,
+        return_to: "/",
+        email: "owner@example.com",
+        password: "secret",
+        login_scope: "provider",
+        tenant_slug: "another-organization",
+      },
+      {
+        ...requestStub(),
+        headers: { cookie: `oidc_csrf=${csrf}` },
+        cookies: { oidc_csrf: csrf },
+        socket: { remoteAddress: "127.0.0.1" },
+      } as Request,
+      res,
+    );
+
+    expect(auth.providerLogin).not.toHaveBeenCalled();
+    expect(auth.login).toHaveBeenCalledWith(
+      {
+        email: "owner@example.com",
+        password: "secret",
+        rememberMe: false,
+      },
+      expect.any(Object),
+    );
     expect(res.redirect).toHaveBeenCalledWith(302, "/");
   });
 
@@ -161,6 +224,8 @@ describe("hosted identity provider buttons", () => {
     );
 
     expect(html).toContain("Google account verified");
+    expect(html).toContain("auth-container--register");
+    expect(html).toContain("Create your UniERP workspace");
     expect(html).toContain('value="verified@example.com"');
     expect(html).toContain('name="external_auth"');
     expect(html).not.toContain('name="password"');

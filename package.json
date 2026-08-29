@@ -17,7 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "architecture:check": "node scripts/check-module-boundaries.mjs && pnpm exec depcruise --config .dependency-cruiser.cjs src --output-type err",
+    "architecture:check": "node scripts/check-layer.mjs && pnpm exec depcruise --config .dependency-cruiser.cjs src --output-type err",
     "clean": "rimraf dist"
   },
   "dependencies": {
@@ -82,7 +82,9 @@
     "@types/web-push": "^3.6.4",
     "@vitest/coverage-v8": "^2.1.9",
     "dependency-cruiser": "^18.0.0",
+    "eslint": "^9.39.5",
     "rimraf": "^6.0.0",
+    "typescript-eslint": "^8.67.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   }

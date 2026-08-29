@@ -75,7 +75,7 @@ export function verifyCsrf(req: Request, submittedToken?: string): boolean {
  * The unified, enterprise-grade hosted OIDC auth portal.
  *
  * Responsive, theme-aware UX with social SSO, accessible risk controls,
- * CSRF security, explicit tenant/provider scope, and multi-modal MFA.
+ * CSRF security, server-derived tenant/provider scope, and multi-modal MFA.
  */
 @ApiExcludeController()
 @Controller("oidc")
@@ -410,8 +410,11 @@ export class LoginController {
   ): Promise<void> {
     const returnTo = safeReturnTo(body.return_to);
     const csrfToken = getOrSetCsrf(req, res);
-    const requestedProviderRealm = body.login_scope === "provider";
-    const providers = (requestedProviderRealm || await this.isInternalPlatformLogin(returnTo))
+    // Scope is a server-owned property of the relying-party destination. The
+    // browser must not be able to request provider authority or steer tenant
+    // discovery with hidden/form fields.
+    const isProviderLogin = await this.isInternalPlatformLogin(returnTo);
+    const providers = isProviderLogin
       ? []
       : await this.configuredProviders("login");
 
@@ -442,7 +445,6 @@ export class LoginController {
     }
 
     try {
-      const isProviderLogin = requestedProviderRealm || await this.isInternalPlatformLogin(returnTo);
       const result = (await (isProviderLogin
         ? this.auth.providerLogin(
             { email: body.email, password: body.password } as never,
@@ -453,7 +455,6 @@ export class LoginController {
               email: body.email,
               password: body.password,
               rememberMe: body.remember === "on",
-              tenantSlug: body.tenant_slug?.trim() || undefined,
             } as never,
             {
               ipAddress: req.ip || req.socket.remoteAddress,
@@ -1175,7 +1176,7 @@ const BASE_STYLES = `
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px 16px;
+    padding: 68px 16px 20px;
     position: relative;
     overflow-x: hidden;
     background-image: 
@@ -1234,15 +1235,24 @@ const BASE_STYLES = `
     border-color: var(--border-input);
     color: var(--text-title);
   }
+  .theme-toggle-btn:focus-visible,
+  .social-btn:focus-visible,
+  .btn-submit:focus-visible,
+  .input-icon-btn:focus-visible,
+  .auth-link:focus-visible,
+  .checkbox-label input:focus-visible {
+    outline: 3px solid var(--brand-ring);
+    outline-offset: 2px;
+  }
 
   /* Centered Card Layout */
   .auth-container {
     width: 100%;
-    max-width: 500px;
-    margin: 36px auto;
+    max-width: 460px;
+    margin: 12px auto;
     background: var(--bg-card);
     border: 1px solid var(--border-card);
-    border-radius: 20px;
+    border-radius: 16px;
     box-shadow: var(--shadow-card);
     display: flex;
     flex-direction: column;
@@ -1253,25 +1263,46 @@ const BASE_STYLES = `
 
   /* Form Panel */
   .auth-form-panel {
-    padding: 40px 36px;
+    padding: 28px 30px 24px;
     display: flex;
     flex-direction: column;
     justify-content: center;
   }
 
   @media (max-width: 640px) {
-    .auth-form-panel { padding: 28px 20px; }
+    body { padding: 64px 10px 14px; align-items: flex-start; }
+    .auth-top-bar { top: 12px; left: 14px; right: 14px; }
+    .auth-form-panel { padding: 24px 20px 20px; }
   }
 
   .auth-header {
-    margin-bottom: 24px;
+    margin-bottom: 18px;
+  }
+  .auth-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 8px;
+    color: var(--brand-primary);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+  .auth-eyebrow::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--success-solid);
+    box-shadow: 0 0 0 3px var(--success-bg);
   }
   .auth-header h1 {
-    font-size: 1.5rem;
+    font-size: 1.375rem;
     font-weight: 700;
     color: var(--text-title);
     letter-spacing: -0.02em;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
   }
   .auth-header p {
     font-size: 0.875rem;
@@ -1279,8 +1310,8 @@ const BASE_STYLES = `
   }
 
   .auth-alternative {
-    margin-top: 24px;
-    padding-top: 20px;
+    margin-top: 18px;
+    padding-top: 14px;
     border-top: 1px solid var(--border-subtle);
     color: var(--text-secondary);
     font-size: 0.875rem;
@@ -1290,11 +1321,11 @@ const BASE_STYLES = `
   /* Social SSO Grid */
   .social-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-    margin-bottom: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 8px;
+    margin-bottom: 14px;
   }
-  @media (max-width: 480px) {
+  @media (max-width: 340px) {
     .social-grid { grid-template-columns: 1fr; }
   }
   .social-btn {
@@ -1331,7 +1362,7 @@ const BASE_STYLES = `
     display: flex;
     align-items: center;
     gap: 12px;
-    margin: 20px 0;
+    margin: 14px 0;
     color: var(--text-muted);
     font-size: 0.75rem;
     font-weight: 500;
@@ -1347,14 +1378,14 @@ const BASE_STYLES = `
 
   /* Form Elements */
   .form-group {
-    margin-bottom: 16px;
+    margin-bottom: 12px;
   }
   .form-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    gap: 10px;
   }
-  @media (max-width: 480px) {
+  @media (max-width: 340px) {
     .form-row { grid-template-columns: 1fr; }
   }
   .form-label {
@@ -1362,7 +1393,7 @@ const BASE_STYLES = `
     font-size: 0.8125rem;
     font-weight: 600;
     color: var(--text-primary);
-    margin-bottom: 6px;
+    margin-bottom: 5px;
   }
   .input-wrapper {
     position: relative;
@@ -1371,7 +1402,7 @@ const BASE_STYLES = `
   }
   .form-input {
     width: 100%;
-    height: 42px;
+    height: 40px;
     padding: 0 14px;
     font-size: 0.875rem;
     background: var(--bg-input);
@@ -1416,7 +1447,7 @@ const BASE_STYLES = `
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 18px;
+    margin-bottom: 14px;
     font-size: 0.8125rem;
   }
   .checkbox-label {
@@ -1529,7 +1560,7 @@ const BASE_STYLES = `
   /* Primary Button */
   .btn-submit {
     width: 100%;
-    height: 44px;
+    height: 42px;
     background: linear-gradient(135deg, var(--brand-primary) 0%, var(--brand-accent) 100%);
     border: none;
     border-radius: 8px;
@@ -1555,8 +1586,8 @@ const BASE_STYLES = `
 
   /* Password Strength Indicator */
   .strength-container {
-    margin-top: 6px;
-    margin-bottom: 12px;
+    margin-top: 5px;
+    margin-bottom: 8px;
   }
   .strength-bars {
     display: grid;
@@ -1697,6 +1728,14 @@ const BASE_STYLES = `
   .account-row:last-child { border-bottom:0; }
   .account-muted { color:var(--text-muted);font-size:.78rem;margin-top:3px; }
   .account-danger { border:1px solid color-mix(in srgb,#ef4444 35%,var(--border-subtle));border-radius:8px;background:transparent;color:#dc2626;padding:7px 11px;cursor:pointer; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
   @media (max-width: 820px) {
     .account-shell { grid-template-columns:1fr; }
     .account-rail { position:static; }
@@ -1780,11 +1819,6 @@ function renderDocument(title: string, content: string): string {
       button.addEventListener('click', function () {
         togglePassword(button.getAttribute('data-password-target'), button);
       });
-    });
-    var scopeSelect = document.getElementById('login-scope');
-    if (scopeSelect) scopeSelect.addEventListener('change', function () {
-      var group = document.getElementById('organization-slug-group');
-      if (group) group.hidden = scopeSelect.value === 'provider';
     });
     var strengthInput = document.querySelector('[data-password-strength]');
     if (strengthInput) strengthInput.addEventListener('input', function () {
@@ -2383,12 +2417,13 @@ function renderLogin(opts: {
 }): string {
   const returnToEnc = encodeURIComponent(opts.returnTo);
   const content = `
-    <div class="auth-container">
+    <div class="auth-container auth-container--login">
       <!-- Form Panel -->
       <div class="auth-form-panel">
         <div class="auth-header">
+          <span class="auth-eyebrow">Secure identity</span>
           <h1>Sign in to UniERP</h1>
-          <p>Enter your work credentials to access your organization.</p>
+          <p>Use your work account. We’ll route you to the right workspace.</p>
         </div>
 
         ${opts.error ? `<div class="alert-banner alert-error"><span>⚠️ ${escapeHtml(opts.error)}</span></div>` : ""}
@@ -2422,19 +2457,6 @@ function renderLogin(opts: {
               value="${escapeHtml(opts.email || "")}" 
               class="form-input"
             />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="login-scope">Sign-in scope</label>
-            <select id="login-scope" name="login_scope" class="form-input">
-              <option value="tenant">Organization workspace</option>
-              <option value="provider">UniERP provider operations</option>
-            </select>
-          </div>
-
-          <div class="form-group" id="organization-slug-group">
-            <label class="form-label" for="tenant-slug">Organization slug <span style="font-weight:400;color:var(--text-muted)">(needed when this email belongs to multiple organizations)</span></label>
-            <input id="tenant-slug" type="text" name="tenant_slug" autocomplete="organization" placeholder="acme-corp" class="form-input"/>
           </div>
 
           <div class="form-group">
@@ -2472,7 +2494,7 @@ function renderLogin(opts: {
           </div>
 
           <button type="submit" class="btn-submit">
-            <span>Sign In to Workspace</span>
+            <span>Sign in</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
           </button>
         </form>
@@ -2587,12 +2609,13 @@ function renderRegister(opts: {
   const v = opts.values || {};
   const legal = getRegistrationLegalConfig();
   const content = `
-    <div class="auth-container">
+    <div class="auth-container auth-container--register">
       <!-- Form Panel -->
       <div class="auth-form-panel">
         <div class="auth-header">
-          <h1>Start your free trial</h1>
-          <p>Create your organization workspace in less than a minute.</p>
+          <span class="auth-eyebrow">30-day free trial</span>
+          <h1>Create your UniERP workspace</h1>
+          <p>Set up your secure organization account in less than a minute.</p>
         </div>
 
         ${opts.error ? `<div class="alert-banner alert-error"><span>⚠️ ${escapeHtml(opts.error)}</span></div>` : ""}
@@ -2704,7 +2727,7 @@ function renderRegister(opts: {
           </div>
           ` : ""}
 
-          <div class="form-group" style="margin-bottom: 20px;">
+          <div class="form-group" style="margin-bottom: 14px;">
             <label class="checkbox-label" style="font-size: 0.8125rem;">
               <input type="checkbox" name="terms_accepted" required />
               <span>I agree to the <a href="${escapeHtml(legal.terms.url)}" target="_blank" rel="noopener noreferrer" class="auth-link" aria-label="Terms of Service, version ${escapeHtml(legal.terms.version)} (opens in a new tab)">Terms of Service</a> and acknowledge the <a href="${escapeHtml(legal.privacy.url)}" target="_blank" rel="noopener noreferrer" class="auth-link" aria-label="Privacy Policy, version ${escapeHtml(legal.privacy.version)} (opens in a new tab)">Privacy Policy</a>.</span>
@@ -2713,7 +2736,7 @@ function renderRegister(opts: {
           </div>
 
           <button type="submit" class="btn-submit">
-            <span>Create Organization Workspace</span>
+            <span>Create workspace</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
           </button>
         </form>
