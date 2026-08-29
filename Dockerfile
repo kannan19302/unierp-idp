@@ -1,6 +1,6 @@
 # unierp-idp — L3, the identity provider. A separate realm per plane (§ 5.2).
 #
-# Built from THIS repository alone. `@unerp/*` comes from the registry, not from
+# Built from THIS repository alone. `@kannan19302/*` comes from the registry, not from
 # a sibling directory, which is the property that makes the split real rather
 # than a directory layout.
 #
@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y openssl python3 make g++
 # The repository's own .npmrc is deliberately NOT copied.
 COPY package.json package-lock.json* ./
 
-# @unerp/* resolves from the registry. In compose this is the `registry`
+# @kannan19302/* resolves from the registry. In compose this is the `registry`
 # service; the default is the host's, for a plain `docker build` on the machine
 # that runs Verdaccio.
 #
@@ -52,7 +52,7 @@ RUN printf '@kannan19302:registry=%s\nregistry=https://registry.npmjs.org/\n' "$
  && rm -f package-lock.json \
  && npm install --no-audit --no-fund
 
-# @unerp/database generates its Prisma clients in a postinstall, and the
+# @kannan19302/database generates its Prisma clients in a postinstall, and the
 # generator parses a schema that reads env("DATABASE_URL"). It never connects —
 # a syntactically valid placeholder is enough, and the real URL is read at
 # runtime.

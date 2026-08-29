@@ -6,7 +6,9 @@
     "@kannan19302/auth": {
       "symbols": [
         "TOKEN_TYPE",
+        "checkPasswordBreach",
         "comparePassword",
+        "comparePasswordWithRehash",
         "hasPermission",
         "hashPassword",
         "signSessionToken",
@@ -15,7 +17,7 @@
         "verifyTypedToken"
       ],
       "namespaceImports": 0,
-      "consumingFiles": 8
+      "consumingFiles": 11
     },
     "@kannan19302/database": {
       "symbols": [
@@ -31,7 +33,7 @@
         "runWithTenantSession"
       ],
       "namespaceImports": 0,
-      "consumingFiles": 33
+      "consumingFiles": 60
     },
     "@kannan19302/shared": {
       "symbols": [
@@ -43,6 +45,7 @@
         "LoginInput",
         "MfaLoginInput",
         "OnboardingChecklistResponse",
+        "PROVIDER_REALM_TENANT_SLUG",
         "RegisterInput",
         "ResendVerificationInput",
         "ResetPasswordInput",
@@ -63,7 +66,7 @@
         "verifyOtpSchema"
       ],
       "namespaceImports": 0,
-      "consumingFiles": 7
+      "consumingFiles": 8
     }
   }
 }

@@ -13,7 +13,7 @@ importers:
         version: 3.1106.0
       '@kannan19302/auth':
         specifier: file:../auth
-        version: file:../auth(magicast@0.3.5)(typescript@5.9.3)
+        version: file:../auth
       '@kannan19302/blockchain':
         specifier: ^1.0.3
         version: 1.0.3(@kannan19302/shared@file:../shared)
@@ -686,6 +686,7 @@ packages:
 
   '@kannan19302/auth@file:../auth':
     resolution: {directory: ../auth, type: directory}
+    engines: {node: '>=22 <23'}
 
   '@kannan19302/blockchain@1.0.3':
     resolution: {integrity: sha512-OP+sXpYXZmOAj2HTkdNtSfOa3ayt24WrLvT42Hi3TBUFwQMOfUd7LGHt8lxBk/o/h1UcLlHDKl60vmNXSrZOJQ==}
@@ -698,18 +699,18 @@ packages:
 
   '@kannan19302/contracts@file:../unierp-contracts':
     resolution: {directory: ../unierp-contracts, type: directory}
-
-  '@kannan19302/database@1.0.14':
-    resolution: {integrity: sha512-S/bAFo+AH0RXKr1eAcGVHng2JEQ+FOq7sVa5Wigd/Bm5U33EfvAaUgdYc6PgGMM0gBSO+H2ZcrsQnl6QoXriWQ==}
+    engines: {node: '>=22 <23'}
 
   '@kannan19302/database@file:../data':
     resolution: {directory: ../data, type: directory}
+    engines: {node: '>=22 <23'}
 
   '@kannan19302/service-kit@0.2.3':
     resolution: {integrity: sha512-65VyPGCc9yGh/4FyFId45jclnaD0WPIdOwOsaHEcGRbz4hhpkXv28qJRHdanT3DVip3ToJXovZJ8xvAviPU38w==}
 
   '@kannan19302/shared@file:../shared':
     resolution: {directory: ../shared, type: directory}
+    engines: {node: '>=22 <23'}
     peerDependencies:
       react: ^18.3.1 || ^19.0.0
     peerDependenciesMeta:
@@ -4964,17 +4965,14 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
-  '@kannan19302/auth@file:../auth(magicast@0.3.5)(typescript@5.9.3)':
+  '@kannan19302/auth@file:../auth':
     dependencies:
-      '@kannan19302/database': 1.0.14(magicast@0.3.5)(typescript@5.9.3)
       '@kannan19302/shared': file:../shared
       argon2: 0.41.1
       bcryptjs: 2.4.3
       jsonwebtoken: 9.0.3
     transitivePeerDependencies:
-      - magicast
       - react
-      - typescript
 
   '@kannan19302/blockchain@1.0.3(@kannan19302/shared@file:../shared)':
     dependencies:
@@ -4986,15 +4984,6 @@ snapshots:
   '@kannan19302/config@1.0.2': {}
 
   '@kannan19302/contracts@file:../unierp-contracts': {}
-
-  '@kannan19302/database@1.0.14(magicast@0.3.5)(typescript@5.9.3)':
-    dependencies:
-      '@prisma/client': 6.19.3(prisma@6.19.3(magicast@0.3.5)(typescript@5.9.3))(typescript@5.9.3)
-      '@prisma/config': 6.19.3(magicast@0.3.5)
-      prisma: 6.19.3(magicast@0.3.5)(typescript@5.9.3)
-    transitivePeerDependencies:
-      - magicast
-      - typescript
 
   '@kannan19302/database@file:../data(magicast@0.3.5)(typescript@5.9.3)':
     dependencies:

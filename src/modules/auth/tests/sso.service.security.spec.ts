@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BadRequestException, UnauthorizedException } from "@nestjs/common";
+import { UnauthorizedException } from "@nestjs/common";
 import { SsoService } from "../sso.service";
 
 const mocks = vi.hoisted(() => ({
@@ -28,6 +28,11 @@ vi.mock("@kannan19302/database", () => ({
   runWithTenantSession: vi.fn(async (_context: unknown, operation: () => unknown) => operation()),
 }));
 
+vi.mock("@kannan19302/auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@kannan19302/auth")>()),
+  decryptConfigurationSecret: vi.fn(() => "synthetic-client-secret"),
+}));
+
 vi.mock("../sso-plan-gate", () => ({
   assertSsoFederationEnabled: vi.fn(),
 }));
@@ -51,7 +56,13 @@ const discovery = {
 };
 
 function response(body: unknown, ok = true, status = 200): Response {
-  return { ok, status, json: vi.fn().mockResolvedValue(body) } as unknown as Response;
+  return {
+    ok,
+    status,
+    headers: new Headers({ "content-type": "application/json" }),
+    json: vi.fn().mockResolvedValue(body),
+    text: vi.fn().mockResolvedValue(JSON.stringify(body)),
+  } as unknown as Response;
 }
 
 describe("SsoService inbound OIDC security", () => {
@@ -61,6 +72,8 @@ describe("SsoService inbound OIDC security", () => {
     prisma.tenant.findUnique.mockResolvedValue({ id: "tenant-a", slug: "acme" });
     prisma.ssoConfig.findUnique.mockResolvedValue({
       isActive: true,
+      verificationStatus: "VERIFIED",
+      lastVerifiedAt: new Date("2026-08-29T00:00:00.000Z"),
       issuerUrl: issuer,
       clientId: "client-a",
       clientSecret: "not-a-real-secret",
@@ -171,7 +184,7 @@ describe("SsoService inbound OIDC security", () => {
       token_endpoint: "http://127.0.0.1/admin",
     }));
 
-    await expect(service().buildOidcLoginUrl("acme", "/apps")).rejects.toThrow(BadRequestException);
+    await expect(service().buildOidcLoginUrl("acme", "/apps")).rejects.toThrow(UnauthorizedException);
     expect(createFederationTransaction).not.toHaveBeenCalled();
   });
 });

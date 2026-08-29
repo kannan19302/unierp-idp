@@ -9,26 +9,23 @@ import {
 import { createHash, randomBytes } from "node:crypto";
 import { SAML } from "@node-saml/node-saml";
 import { idpPrisma, prisma, runWithTenantSession } from "@kannan19302/database";
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import { createRemoteJWKSet, type JWTPayload } from "jose";
 import { AuthService, SessionContext } from "./auth.service";
 import { ExternalAuthStore } from "./external-auth.store";
 import { assertSsoFederationEnabled } from "./sso-plan-gate";
+import { verifyInboundOidcToken } from "./inbound-oidc-verifier";
+import {
+  decryptConfigurationSecret,
+  discoverOidcConfiguration,
+  requirePublicHttpsUrl,
+  type OidcDiscoveryDocument,
+} from "@kannan19302/auth";
 
 interface SsoProfile {
   email: string;
   firstName?: string;
   lastName?: string;
   provider: "SAML" | "OIDC";
-}
-
-const OIDC_ALLOWED_SIGNING_ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"];
-
-interface OidcDiscoveryDocument {
-  issuer: string;
-  authorization_endpoint: string;
-  token_endpoint: string;
-  jwks_uri: string;
-  id_token_signing_alg_values_supported?: string[];
 }
 
 /**
@@ -85,7 +82,7 @@ export class SsoService {
     const config = await prisma.ssoConfig.findUnique({
       where: { tenantId_providerType: { tenantId, providerType } },
     });
-    if (!config || !config.isActive) {
+    if (!config || !config.isActive || config.verificationStatus !== "VERIFIED" || !config.lastVerifiedAt) {
       throw new BadRequestException(`${providerType} SSO is not configured for this organization.`);
     }
     return config;
@@ -96,7 +93,12 @@ export class SsoService {
     if (!tenant) return null;
 
     const configs = await prisma.ssoConfig.findMany({
-      where: { tenantId: tenant.id, isActive: true },
+      where: {
+        tenantId: tenant.id,
+        isActive: true,
+        verificationStatus: "VERIFIED",
+        lastVerifiedAt: { not: null },
+      },
     });
     const saml = configs.find((c) => c.providerType === "SAML");
     const oidc = configs.find((c) => c.providerType === "OIDC");
@@ -242,10 +244,11 @@ export class SsoService {
 
     const tokenRes = await fetch(discovered.token_endpoint, {
       method: "POST",
+      redirect: "error",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_id: config.clientId,
-        ...(config.clientSecret ? { client_secret: config.clientSecret } : {}),
+        ...(config.clientSecret ? { client_secret: this.decryptClientSecret(config.clientSecret) } : {}),
         code,
         code_verifier: transaction.codeVerifier,
         grant_type: "authorization_code",
@@ -291,41 +294,17 @@ export class SsoService {
   private async discoverOidcConfiguration(config: {
     issuerUrl: string | null;
   }): Promise<OidcDiscoveryDocument> {
-    const issuer = requirePublicHttpsUrl(config.issuerUrl, "OIDC issuer");
-    const discoveryUrl = new URL(`${normalizeIssuer(issuer)}/.well-known/openid-configuration`);
-    let response: Response;
     try {
-      response = await fetch(discoveryUrl, { signal: AbortSignal.timeout(10_000) });
-    } catch {
-      throw new UnauthorizedException("Identity provider metadata is unavailable.");
+      requirePublicHttpsUrl(config.issuerUrl, "OIDC issuer");
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : "OIDC issuer is invalid.");
     }
-    if (!response.ok) {
-      this.logger.warn(`[sso] OIDC discovery failed for issuer ${issuer.origin}: ${response.status}`);
-      throw new UnauthorizedException("Identity provider metadata is unavailable.");
-    }
-
-    let metadata: OidcDiscoveryDocument;
     try {
-      metadata = await response.json() as OidcDiscoveryDocument;
-    } catch {
-      throw new UnauthorizedException("Identity provider metadata is invalid.");
+      return await discoverOidcConfiguration(config.issuerUrl);
+    } catch (error) {
+      this.logger.warn(`[sso] OIDC discovery rejected: ${error instanceof Error ? error.message : "invalid metadata"}`);
+      throw new UnauthorizedException("Identity provider metadata is unavailable or invalid.");
     }
-    if (metadata.issuer !== normalizeIssuer(issuer)) {
-      throw new UnauthorizedException("Identity provider issuer does not match the configured issuer.");
-    }
-    for (const [label, endpoint] of Object.entries({
-      authorization: metadata.authorization_endpoint,
-      token: metadata.token_endpoint,
-      JWKS: metadata.jwks_uri,
-    })) {
-      // OIDC discovery is authoritative for endpoint placement. Some valid
-      // issuers (for example hosted providers) publish JWKS on a separate
-      // origin, so same-origin enforcement would break conformant providers.
-      // Each discovered endpoint is still syntactically constrained here and
-      // production egress policy supplies the network-level SSRF boundary.
-      requirePublicHttpsUrl(endpoint, `OIDC ${label} endpoint`);
-    }
-    return metadata;
   }
 
   private async verifyOidcToken(
@@ -334,29 +313,17 @@ export class SsoService {
     nonce: string,
     discovery: OidcDiscoveryDocument,
   ): Promise<JWTPayload> {
-    const algorithms = discovery.id_token_signing_alg_values_supported
-      ?.filter((algorithm) => OIDC_ALLOWED_SIGNING_ALGORITHMS.includes(algorithm)) ?? [];
-    if (algorithms.length === 0) {
-      throw new UnauthorizedException("Identity provider does not advertise a supported signing algorithm.");
-    }
+    const algorithms = discovery.id_token_signing_alg_values_supported;
     try {
-      const verified = await jwtVerify(idToken, this.keySetFor(discovery.jwks_uri), {
-        algorithms,
+      return await verifyInboundOidcToken(idToken, this.keySetFor(discovery.jwks_uri), {
         issuer: discovery.issuer,
-        audience: clientId,
+        clientId,
+        nonce,
+        algorithms,
         maxTokenAge: "5m",
-        clockTolerance: 30,
+        clockToleranceSeconds: 30,
       });
-      const audience = verified.payload.aud;
-      if (Array.isArray(audience) && verified.payload.azp !== clientId) {
-        throw new UnauthorizedException("Identity response authorized party is invalid.");
-      }
-      if (verified.payload.nonce !== nonce) {
-        throw new UnauthorizedException("Identity response nonce is invalid.");
-      }
-      return verified.payload;
     } catch (error) {
-      if (error instanceof UnauthorizedException) throw error;
       this.logger.warn(`[sso] OIDC ID token verification failed: ${error instanceof Error ? error.message : "unknown verification error"}`);
       throw new UnauthorizedException("Identity response could not be verified.");
     }
@@ -365,13 +332,21 @@ export class SsoService {
   private keySetFor(jwksUrl: string) {
     const cached = this.jwks.get(jwksUrl);
     if (cached) return cached;
-    const keySet = createRemoteJWKSet(requirePublicHttpsUrl(jwksUrl, "OIDC JWKS endpoint"), {
+    const keySet = createRemoteJWKSet(new URL(jwksUrl), {
       timeoutDuration: 5_000,
       cooldownDuration: 30_000,
       cacheMaxAge: 10 * 60_000,
     });
     this.jwks.set(jwksUrl, keySet);
     return keySet;
+  }
+
+  private decryptClientSecret(envelope: string): string {
+    try {
+      return decryptConfigurationSecret(envelope);
+    } catch {
+      throw new UnauthorizedException("Federation client credentials are unavailable.");
+    }
   }
 
   // ── Shared JIT provisioning ──────────────────────────────────────────
@@ -419,39 +394,4 @@ export class SsoService {
     // absent — no need to preload it here.
     return user;
   }
-}
-
-function requirePublicHttpsUrl(value: string | null | undefined, label: string): URL {
-  if (!value || value.length > 2048) {
-    throw new BadRequestException(`${label} is required and must be a valid HTTPS URL.`);
-  }
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new BadRequestException(`${label} must be a valid HTTPS URL.`);
-  }
-  const host = url.hostname.toLowerCase();
-  if (
-    url.protocol !== "https:" ||
-    url.username ||
-    url.password ||
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    isPrivateIpAddress(host)
-  ) {
-    throw new BadRequestException(`${label} must be a public HTTPS URL.`);
-  }
-  return url;
-}
-
-function normalizeIssuer(url: URL): string {
-  return url.toString().replace(/\/$/, "");
-}
-
-function isPrivateIpAddress(host: string): boolean {
-  if (/^127\./.test(host) || /^10\./.test(host) || /^0\./.test(host)) return true;
-  if (/^192\.168\./.test(host) || /^169\.254\./.test(host)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
-  return host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
 }

@@ -107,6 +107,15 @@ export const envSchema = z.object({
     .describe(
       "MFA TOTP secret encryption key; falls back to PII_ENCRYPTION_KEY when unset",
     ),
+  SSO_CONFIG_ENCRYPTION_KEYS: z
+    .string()
+    .optional()
+    .describe("JSON object mapping federation-secret key IDs to base64-encoded 32-byte AES keys"),
+  SSO_CONFIG_ENCRYPTION_ACTIVE_KEY_ID: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,64}$/)
+    .optional()
+    .describe("Key ID used to decrypt and rotate federation client secrets"),
   EXT_SERVICE_JWT_SECRET: z
     .string()
     .min(1)
@@ -359,6 +368,7 @@ export type Env = z.infer<typeof envSchema>;
 const productionStrictSecrets: Array<keyof Env> = [
   "NEXTAUTH_SECRET",
   "PII_ENCRYPTION_KEY",
+  "SSO_CONFIG_ENCRYPTION_KEYS",
   "EXT_SERVICE_JWT_SECRET",
   "S3_ACCESS_KEY",
   "S3_SECRET_KEY",
@@ -369,6 +379,22 @@ const productionStrictSecrets: Array<keyof Env> = [
 export interface ValidateEnvResult {
   env: Env | null;
   errors: string[];
+}
+
+function checkSsoEncryptionKeyring(env: Env, errors: string[]): void {
+  if (!env.SSO_CONFIG_ENCRYPTION_ACTIVE_KEY_ID) {
+    errors.push("SSO_CONFIG_ENCRYPTION_ACTIVE_KEY_ID: required in production");
+    return;
+  }
+  try {
+    const parsed = JSON.parse(env.SSO_CONFIG_ENCRYPTION_KEYS ?? "") as Record<string, unknown>;
+    const value = parsed?.[env.SSO_CONFIG_ENCRYPTION_ACTIVE_KEY_ID];
+    if (typeof value !== "string" || Buffer.from(value, "base64").length !== 32) {
+      errors.push("SSO_CONFIG_ENCRYPTION_KEYS: active key must resolve to a base64-encoded 32-byte key");
+    }
+  } catch {
+    errors.push("SSO_CONFIG_ENCRYPTION_KEYS: must be a valid JSON keyring in production");
+  }
 }
 
 /** Pure validation core — returns errors instead of exiting (unit-testable). */
@@ -393,6 +419,7 @@ export function checkEnv(
       if (/^(change-?me|secret|password|test)$/i.test(value))
         errors.push(`${key}: placeholder value not allowed in production`);
     }
+    checkSsoEncryptionKeyring(env, errors);
     if (String(source.DATABASE_URL ?? "").includes("localhost")) {
       errors.push("DATABASE_URL: localhost database not allowed in production");
     }

@@ -1,6 +1,10 @@
 {
   "name": "@kannan19302/idp",
   "version": "0.0.1",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "private": true,
   "description": "UniERP Backend API — NestJS",
   "scripts": {
