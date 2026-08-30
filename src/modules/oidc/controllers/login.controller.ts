@@ -113,12 +113,15 @@ export class LoginController {
       };
     },
     @Res({ passthrough: true }) res: Response,
+    @Query("return_to") returnTo?: string,
     @Query("error") error?: string,
     @Query("success") success?: string,
   ): Promise<string> {
     const userId = req.user?.userId || "";
     const tenantId = req.user?.tenantId || "";
     const csrfToken = getOrSetCsrf(req, res);
+    const referer = typeof req.headers.referer === "string" ? req.headers.referer : undefined;
+    const backNavigation = resolvePlatformBackNavigation(returnTo, referer);
     const [configured, connected, account, organizations, privacy] = await Promise.all([
       this.configuredProviders("login"),
       this.oauth.getConnectedProviders(userId, tenantId),
@@ -201,6 +204,7 @@ export class LoginController {
       contacts: account.contacts,
       organizations,
       privacy,
+      backNavigation,
       csrfToken,
       error,
       success,
@@ -1892,6 +1896,83 @@ function renderProviderButtons(
   </div>`;
 }
 
+function resolvePlatformBackNavigation(
+  returnTo?: string,
+  referer?: string,
+): { label: string; url: string } {
+  const target = returnTo || referer;
+  const wizardUrl = getPlatformNavigationConfig().wizardUrl;
+
+  if (!target) {
+    return { label: "← Platform Wizard", url: wizardUrl };
+  }
+
+  try {
+    const url = new URL(target, "http://localhost:4000");
+    const port = url.port;
+    const path = url.pathname;
+
+    // Port 4003 - Tenant Applications
+    if (port === "4003") {
+      if (path.startsWith("/apps") || path === "/" || path === "") {
+        return { label: "← Back to app list", url: `${url.origin}/apps` };
+      }
+      if (path.startsWith("/dashboard")) {
+        return { label: "← Back to Dashboard", url: `${url.origin}/dashboard` };
+      }
+      return { label: "← Back to Tenant Applications", url: `${url.origin}/apps` };
+    }
+
+    // Port 4000 - Platform Wizard
+    if (port === "4000") {
+      return { label: "← Back to Platform Wizard", url: `${url.origin}/` };
+    }
+
+    // Port 4001 - Marketing Site
+    if (port === "4001") {
+      return { label: "← Back to Marketing Site", url: `${url.origin}/` };
+    }
+
+    // Port 4002 - Provider Admin OS / Console
+    if (port === "4002") {
+      return { label: "← Back to Provider Admin OS", url: `${url.origin}/` };
+    }
+
+    // Port 4004 - Tenant Websites
+    if (port === "4004") {
+      return { label: "← Back to Tenant Website", url: `${url.origin}/` };
+    }
+
+    // Port 4005 - Web Studio
+    if (port === "4005") {
+      return { label: "← Back to Web Studio", url: `${url.origin}/` };
+    }
+
+    // Port 4006 - Tenant Admin OS / OCC
+    if (port === "4006") {
+      return { label: "← Back to Tenant Admin", url: `${url.origin}/` };
+    }
+
+    // Port 4007 - Marketplace
+    if (port === "4007") {
+      return { label: "← Back to Marketplace", url: `${url.origin}/` };
+    }
+
+    // Port 4008 - Developer Platform
+    if (port === "4008") {
+      return { label: "← Back to Developer Platform", url: `${url.origin}/` };
+    }
+
+    // Generic URL fallback
+    if (path.includes("app")) {
+      return { label: "← Back to app list", url: target };
+    }
+    return { label: "← Back to application", url: target };
+  } catch {
+    return { label: "← Platform Wizard", url: wizardUrl };
+  }
+}
+
 function renderAccountCenter(opts: {
   configured: OAuthProviderName[];
   connected: OAuthProviderName[];
@@ -1946,6 +2027,7 @@ function renderAccountCenter(opts: {
       erasedAt: Date | null;
     }>;
   };
+  backNavigation?: { label: string; url: string };
   csrfToken: string;
   error?: string;
   success?: string;
@@ -2032,6 +2114,9 @@ function renderAccountCenter(opts: {
     <span class="account-status">${escapeHtml(job.status)}</span>
   </div>`).join("");
 
+  const backBtnUrl = opts.backNavigation?.url || navigation.wizardUrl;
+  const backBtnLabel = opts.backNavigation?.label || "← Platform Wizard";
+
   const content = `<div class="account-shell">
     <aside class="account-rail" aria-label="Account settings">
       <div class="account-person">
@@ -2041,7 +2126,7 @@ function renderAccountCenter(opts: {
       <nav>
         <a href="#profile">Profile</a><a href="#organizations">Organizations</a><a href="#security">Sign-in & security</a><a href="#sessions">Sessions & devices</a><a href="#connections">Connected accounts</a><a href="#appearance">Appearance & accessibility</a><a href="#notifications">Notifications</a><a href="#privacy">Privacy & data</a><a href="#billing">Plans & billing</a><a href="#support">Help & support</a>
       </nav>
-      <a class="auth-link" href="${escapeHtml(navigation.wizardUrl)}">← Platform Wizard</a>
+      <a class="auth-link" href="${escapeHtml(backBtnUrl)}">${escapeHtml(backBtnLabel)}</a>
     </aside>
     <main class="account-main" id="main-content">
       <header class="account-heading"><span>Unified settings</span><h1>Account Center</h1><p>One identity and preference center for every UniERP platform.</p></header>
