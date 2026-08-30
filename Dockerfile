@@ -23,6 +23,16 @@ RUN apt-get update && apt-get install -y openssl python3 make g++
 # The repository's own .npmrc is deliberately NOT copied.
 COPY package.json package-lock.json* ./
 
+# Local development uses sibling packages through `file:../...`, but those
+# paths are deliberately outside this repository's standalone build context.
+# Resolve the base/production stages from the latest published compatible
+# versions; the `localdeps` development stage below replaces them with the
+# Compose-provided workspace builds before compiling the IdP.
+RUN npm pkg set \
+  dependencies.@kannan19302/auth=1.0.4 \
+  dependencies.@kannan19302/database=1.0.14 \
+  dependencies.@kannan19302/shared=1.0.5
+
 # @kannan19302/* resolves from the registry. In compose this is the `registry`
 # service; the default is the host's, for a plain `docker build` on the machine
 # that runs Verdaccio.
@@ -94,12 +104,19 @@ COPY src ./src
 # which is the same reason the published package ships prisma/ but not the
 # generated client (see data/scripts/postinstall.mjs).
 FROM deps AS localdeps
+RUN npm install -g pnpm@9.15.4
 
 # tsconfig.base.json is required, not optional: both packages' tsconfig.json
 # does `extends: ./tsconfig.base.json`, and a missing extends target does not
 # fail loudly — tsc silently falls back to its ES3/ES5 defaults and then
 # reports dozens of "Property 'padStart' does not exist on type 'string'"
 # errors that look like source bugs rather than a missing file.
+COPY --from=localpkgs unierp-contracts/package.json unierp-contracts/tsconfig.json unierp-contracts/tsconfig.base.json /tmp/unierp-contracts/
+COPY --from=localpkgs unierp-contracts/src /tmp/unierp-contracts/src
+RUN cd /tmp/unierp-contracts \
+ && npm install --no-audit --no-fund \
+ && npm run build
+
 COPY --from=localpkgs shared/package.json shared/tsconfig.json shared/tsconfig.base.json /tmp/shared/
 COPY --from=localpkgs shared/src /tmp/shared/src
 RUN cd /tmp/shared \
@@ -133,12 +150,13 @@ RUN cd /tmp/auth \
 # Overlay: replace the published copies with the freshly built local ones.
 # Their nested node_modules travel with them, so @prisma/client and the
 # generated .prisma/client engines resolve from inside each package.
-RUN rm -rf node_modules/@kannan19302/shared node_modules/@kannan19302/database node_modules/@kannan19302/auth \
+RUN rm -rf node_modules/@kannan19302/contracts node_modules/@kannan19302/shared node_modules/@kannan19302/database node_modules/@kannan19302/auth \
  && mkdir -p node_modules/@kannan19302 \
+ && cp -r /tmp/unierp-contracts node_modules/@kannan19302/contracts \
  && cp -r /tmp/shared node_modules/@kannan19302/shared \
  && cp -r /tmp/data node_modules/@kannan19302/database \
  && cp -r /tmp/auth node_modules/@kannan19302/auth \
- && rm -rf /tmp/shared /tmp/data /tmp/auth
+ && rm -rf /tmp/unierp-contracts /tmp/shared /tmp/data /tmp/auth
 
 # Application source comes after the expensive workspace overlays so an IdP
 # controller/middleware edit recompiles only this application layer. When this

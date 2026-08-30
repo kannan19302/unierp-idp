@@ -228,7 +228,6 @@ export class SigningKeyService implements OnModuleInit {
 function rsaThumbprintSync(jwk: JWK): string {
   const canonical = JSON.stringify({ e: jwk.e, kty: jwk.kty, n: jwk.n });
   // Imported lazily to keep the crypto surface of this module explicit.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { createHash } = require("node:crypto") as typeof import("node:crypto");
   return createHash("sha256").update(canonical).digest("base64url");
 }

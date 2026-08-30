@@ -97,7 +97,9 @@ describe("InMemoryThrottlerStorage", () => {
   it("expires after ttl and resets", async () => {
     const storage = new InMemoryThrottlerStorage();
     await storage.increment("test:expire", 100, 2, 1000, "short");
-    await new Promise((r) => setTimeout(r, 110));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 110);
+    });
 
     const result = await storage.increment(
       "test:expire",

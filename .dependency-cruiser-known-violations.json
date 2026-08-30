@@ -1,0 +1,101 @@
+[
+  {
+    "type": "dependency",
+    "from": "src/modules/auth/sso.controller.ts",
+    "to": "src/modules/oidc/controllers/login.controller.ts",
+    "unresolvedTo": "../oidc/controllers/login.controller",
+    "dependencyTypes": ["local", "require"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-module-deep-imports"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/modules/oidc/controllers/account-contact.controller.ts",
+    "to": "src/modules/auth/account-contact.service.ts",
+    "unresolvedTo": "../../auth/account-contact.service",
+    "dependencyTypes": ["local", "require"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-module-deep-imports"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/modules/oidc/controllers/account-governance.controller.ts",
+    "to": "src/modules/auth/account-governance.service.ts",
+    "unresolvedTo": "../../auth/account-governance.service",
+    "dependencyTypes": ["local", "require"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-module-deep-imports"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/modules/oidc/controllers/login.controller.ts",
+    "to": "src/modules/auth/account-governance.service.ts",
+    "unresolvedTo": "../../auth/account-governance.service",
+    "dependencyTypes": ["local", "require"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-module-deep-imports"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/modules/oidc/controllers/login.controller.ts",
+    "to": "src/modules/auth/auth.service.ts",
+    "unresolvedTo": "../../auth/auth.service",
+    "dependencyTypes": ["local", "require"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-module-deep-imports"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/modules/oidc/controllers/login.controller.ts",
+    "to": "src/modules/auth/oauth.service.ts",
+    "unresolvedTo": "../../auth/oauth.service",
+    "dependencyTypes": ["local", "require"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-module-deep-imports"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/modules/oidc/controllers/passkey.controller.ts",
+    "to": "src/modules/auth/passkey.service.ts",
+    "unresolvedTo": "../../auth/passkey.service",
+    "dependencyTypes": ["local", "require"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-module-deep-imports"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/modules/oidc/controllers/token.controller.ts",
+    "to": "src/modules/auth/auth.service.ts",
+    "unresolvedTo": "../../auth/auth.service",
+    "dependencyTypes": ["local", "require"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-module-deep-imports"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/modules/oidc/oidc.module.ts",
+    "to": "src/modules/auth/auth.module.ts",
+    "unresolvedTo": "../auth/auth.module",
+    "dependencyTypes": ["local", "require"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-module-deep-imports"
+    }
+  }
+]

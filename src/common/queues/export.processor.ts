@@ -33,7 +33,9 @@ export class ExportProcessor extends WorkerHost {
     await job.updateProgress(50);
 
     // Simulate processing time proportional to data size
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100);
+    });
 
     await job.updateProgress(100);
 

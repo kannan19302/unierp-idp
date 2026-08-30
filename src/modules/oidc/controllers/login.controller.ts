@@ -1038,7 +1038,9 @@ export function safeReturnTo(raw?: string): string {
       parsed.hostname.endsWith(".uni-erp.com") ||
       parsed.hostname.endsWith(".unierp.internal");
     if (isAllowedHost) return raw;
-  } catch {}
+  } catch {
+    // Invalid absolute URLs are intentionally reduced to the safe root route.
+  }
   return "/";
 }
 
@@ -1176,7 +1178,7 @@ const BASE_STYLES = `
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 68px 16px 20px;
+    padding: 48px 16px 16px;
     position: relative;
     overflow-x: hidden;
     background-image: 
@@ -1187,9 +1189,9 @@ const BASE_STYLES = `
   /* Top Navigation Bar */
   .auth-top-bar {
     position: absolute;
-    top: 16px;
-    left: 24px;
-    right: 24px;
+    top: 14px;
+    left: 20px;
+    right: 20px;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -1198,18 +1200,18 @@ const BASE_STYLES = `
   .auth-brand-logo {
     display: inline-flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     text-decoration: none;
     color: var(--text-title);
     font-weight: 700;
-    font-size: 1.15rem;
+    font-size: 1.05rem;
     letter-spacing: -0.02em;
   }
   .auth-brand-icon {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     background: linear-gradient(135deg, #4f46e5 0%, #0ea5e9 100%);
-    border-radius: 8px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1219,13 +1221,13 @@ const BASE_STYLES = `
   .theme-toggle-btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
     background: var(--bg-card);
     border: 1px solid var(--border-card);
     color: var(--text-secondary);
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     font-weight: 500;
-    padding: 6px 12px;
+    padding: 4px 10px;
     border-radius: 9999px;
     cursor: pointer;
     box-shadow: var(--shadow-sm);
@@ -1241,18 +1243,18 @@ const BASE_STYLES = `
   .input-icon-btn:focus-visible,
   .auth-link:focus-visible,
   .checkbox-label input:focus-visible {
-    outline: 3px solid var(--brand-ring);
+    outline: 2px solid var(--brand-ring);
     outline-offset: 2px;
   }
 
   /* Centered Card Layout */
   .auth-container {
     width: 100%;
-    max-width: 460px;
-    margin: 12px auto;
+    max-width: 396px;
+    margin: 8px auto;
     background: var(--bg-card);
     border: 1px solid var(--border-card);
-    border-radius: 16px;
+    border-radius: 12px;
     box-shadow: var(--shadow-card);
     display: flex;
     flex-direction: column;
@@ -1260,70 +1262,78 @@ const BASE_STYLES = `
     position: relative;
     z-index: 10;
   }
+  .auth-container--register {
+    max-width: 432px;
+  }
 
   /* Form Panel */
   .auth-form-panel {
-    padding: 28px 30px 24px;
+    padding: 20px 22px 18px;
     display: flex;
     flex-direction: column;
     justify-content: center;
   }
 
   @media (max-width: 640px) {
-    body { padding: 64px 10px 14px; align-items: flex-start; }
-    .auth-top-bar { top: 12px; left: 14px; right: 14px; }
-    .auth-form-panel { padding: 24px 20px 20px; }
+    body { padding: 52px 10px 12px; align-items: flex-start; }
+    .auth-top-bar { top: 10px; left: 12px; right: 12px; }
+    .auth-form-panel { padding: 18px 16px 16px; }
   }
 
   .auth-header {
-    margin-bottom: 18px;
+    margin-bottom: 12px;
   }
   .auth-eyebrow {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    margin-bottom: 8px;
+    gap: 5px;
+    margin-bottom: 5px;
+    padding: 2px 7px;
+    border-radius: 9999px;
+    background: var(--brand-light);
     color: var(--brand-primary);
-    font-size: 0.6875rem;
-    font-weight: 700;
-    letter-spacing: 0.09em;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
   }
   .auth-eyebrow::before {
     content: "";
-    width: 6px;
-    height: 6px;
+    width: 5px;
+    height: 5px;
     border-radius: 50%;
     background: var(--success-solid);
-    box-shadow: 0 0 0 3px var(--success-bg);
+    box-shadow: 0 0 0 2px var(--success-bg);
   }
   .auth-header h1 {
-    font-size: 1.375rem;
+    font-size: 1.1875rem;
     font-weight: 700;
     color: var(--text-title);
     letter-spacing: -0.02em;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
+    line-height: 1.25;
   }
   .auth-header p {
-    font-size: 0.875rem;
+    font-size: 0.78125rem;
     color: var(--text-secondary);
+    line-height: 1.35;
   }
 
   .auth-alternative {
-    margin-top: 18px;
-    padding-top: 14px;
+    margin-top: 10px;
+    padding-top: 8px;
     border-top: 1px solid var(--border-subtle);
     color: var(--text-secondary);
-    font-size: 0.875rem;
+    font-size: 0.75rem;
     text-align: center;
   }
 
   /* Social SSO Grid */
   .social-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-    gap: 8px;
-    margin-bottom: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+    gap: 6px;
+    margin-bottom: 8px;
   }
   @media (max-width: 340px) {
     .social-grid { grid-template-columns: 1fr; }
@@ -1332,14 +1342,14 @@ const BASE_STYLES = `
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    height: 40px;
-    padding: 0 12px;
+    gap: 6px;
+    height: 34px;
+    padding: 0 10px;
     background: var(--bg-btn-sec);
     border: 1px solid var(--border-btn-sec);
-    border-radius: 8px;
+    border-radius: 6px;
     color: var(--text-btn-sec);
-    font-size: 0.8125rem;
+    font-size: 0.78125rem;
     font-weight: 500;
     text-decoration: none;
     box-shadow: var(--shadow-sm);
@@ -1352,8 +1362,8 @@ const BASE_STYLES = `
     box-shadow: var(--shadow-md);
   }
   .social-btn svg {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
   }
 
@@ -1361,11 +1371,11 @@ const BASE_STYLES = `
   .auth-divider {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin: 14px 0;
+    gap: 8px;
+    margin: 8px 0;
     color: var(--text-muted);
-    font-size: 0.75rem;
-    font-weight: 500;
+    font-size: 0.65625rem;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -1378,22 +1388,22 @@ const BASE_STYLES = `
 
   /* Form Elements */
   .form-group {
-    margin-bottom: 12px;
+    margin-bottom: 9px;
   }
   .form-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 10px;
+    gap: 8px;
   }
   @media (max-width: 340px) {
     .form-row { grid-template-columns: 1fr; }
   }
   .form-label {
     display: block;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     font-weight: 600;
-    color: var(--text-primary);
-    margin-bottom: 5px;
+    color: var(--text-secondary);
+    margin-bottom: 3px;
   }
   .input-wrapper {
     position: relative;
@@ -1402,12 +1412,12 @@ const BASE_STYLES = `
   }
   .form-input {
     width: 100%;
-    height: 40px;
-    padding: 0 14px;
-    font-size: 0.875rem;
+    height: 35px;
+    padding: 0 10px;
+    font-size: 0.8125rem;
     background: var(--bg-input);
     border: 1px solid var(--border-input);
-    border-radius: 8px;
+    border-radius: 6px;
     color: var(--text-primary);
     outline: none;
     transition: all 0.15s ease;
@@ -1419,18 +1429,19 @@ const BASE_STYLES = `
   .form-input:focus {
     border-color: var(--border-input-focus);
     background: var(--bg-input-focus);
-    box-shadow: 0 0 0 3px var(--brand-ring);
+    box-shadow: 0 0 0 2px var(--brand-ring);
   }
   .form-input::placeholder {
     color: var(--text-placeholder);
+    font-size: 0.78125rem;
   }
   .input-icon-btn {
     position: absolute;
-    right: 8px;
+    right: 6px;
     background: transparent;
     border: none;
-    padding: 6px;
-    border-radius: 6px;
+    padding: 4px;
+    border-radius: 4px;
     color: var(--text-muted);
     cursor: pointer;
     display: flex;
@@ -1447,26 +1458,29 @@ const BASE_STYLES = `
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 14px;
-    font-size: 0.8125rem;
+    margin-top: 2px;
+    margin-bottom: 10px;
+    font-size: 0.75rem;
   }
   .checkbox-label {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     color: var(--text-secondary);
     cursor: pointer;
     user-select: none;
+    font-size: 0.75rem;
   }
   .checkbox-label input[type="checkbox"] {
     accent-color: var(--brand-primary);
-    width: 15px;
-    height: 15px;
+    width: 13px;
+    height: 13px;
   }
   .auth-link {
     color: var(--brand-primary);
     text-decoration: none;
     font-weight: 500;
+    font-size: 0.75rem;
     transition: color 0.15s ease;
   }
   .auth-link:hover {
@@ -1479,25 +1493,26 @@ const BASE_STYLES = `
     left: 8px;
     z-index: 1000;
     transform: translateY(-160%);
-    padding: 10px 14px;
-    border-radius: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
     background: var(--bg-card);
     color: var(--text-title);
     box-shadow: var(--shadow-md);
+    font-size: 0.75rem;
   }
   .skip-link:focus { transform: translateY(0); }
 
   /* Human Verification Slider (Buzzle) */
   .slider-wall-box {
-    margin-bottom: 18px;
+    margin-bottom: 14px;
     background: var(--bg-slider-track);
     border: 1px solid var(--border-card);
-    border-radius: 8px;
-    padding: 3px;
+    border-radius: 6px;
+    padding: 2px;
     position: relative;
     user-select: none;
     overflow: hidden;
-    height: 44px;
+    height: 38px;
   }
   .slider-track-text {
     position: absolute;
@@ -1505,7 +1520,7 @@ const BASE_STYLES = `
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     font-weight: 500;
     color: var(--text-muted);
     pointer-events: none;
@@ -1519,18 +1534,18 @@ const BASE_STYLES = `
     left: 0;
     width: 0;
     background: var(--brand-light);
-    border-radius: 6px 0 0 6px;
+    border-radius: 5px 0 0 5px;
     pointer-events: none;
   }
   .slider-handle {
     position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 44px;
-    height: 38px;
+    top: 2px;
+    left: 2px;
+    width: 38px;
+    height: 32px;
     background: var(--bg-slider-handle);
     border: 1px solid var(--border-input);
-    border-radius: 6px;
+    border-radius: 5px;
     box-shadow: var(--shadow-sm);
     display: flex;
     align-items: center;
@@ -1560,25 +1575,26 @@ const BASE_STYLES = `
   /* Primary Button */
   .btn-submit {
     width: 100%;
-    height: 42px;
+    height: 36px;
     background: linear-gradient(135deg, var(--brand-primary) 0%, var(--brand-accent) 100%);
     border: none;
-    border-radius: 8px;
+    border-radius: 6px;
     color: #ffffff;
-    font-size: 0.9375rem;
+    font-size: 0.8125rem;
     font-weight: 600;
     letter-spacing: -0.01em;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
     box-shadow: var(--shadow-btn);
     transition: all 0.15s ease;
   }
   .btn-submit:hover {
     filter: brightness(1.05);
     transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(79, 70, 229, 0.28);
   }
   .btn-submit:active {
     transform: translateY(0);
@@ -1586,36 +1602,36 @@ const BASE_STYLES = `
 
   /* Password Strength Indicator */
   .strength-container {
-    margin-top: 5px;
-    margin-bottom: 8px;
+    margin-top: 4px;
+    margin-bottom: 2px;
   }
   .strength-bars {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 4px;
-    height: 4px;
-    margin-bottom: 4px;
+    gap: 3px;
+    height: 3px;
+    margin-bottom: 3px;
   }
   .strength-bar {
     background: var(--border-card);
-    border-radius: 2px;
+    border-radius: 1.5px;
     transition: background 0.2s ease;
   }
   .strength-label {
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
     color: var(--text-muted);
   }
 
   /* Alerts */
   .alert-banner {
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-size: 0.8125rem;
-    margin-bottom: 18px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    margin-bottom: 10px;
     display: flex;
     align-items: center;
-    gap: 10px;
-    line-height: 1.4;
+    gap: 8px;
+    line-height: 1.35;
   }
   .alert-error {
     background: var(--error-bg);
@@ -2435,7 +2451,12 @@ function renderLogin(opts: {
 
         <input type="hidden" id="passkey-login-csrf" value="${escapeHtml(opts.csrfToken || "")}"/>
         <input type="hidden" id="passkey-return-to" value="${escapeHtml(opts.returnTo)}"/>
-        <button type="button" id="passkey-login" class="social-btn" style="width:100%;justify-content:center">Sign in with a passkey</button>
+        <button type="button" id="passkey-login" class="social-btn" style="width:100%;justify-content:center">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m21 2-2 2m-1.5 1.5L16 7m-1.5 1.5L13 10m-1.5 1.5L10 13m-2-2a5 5 0 1 0-7 7 5 5 0 0 0 7-7z"></path>
+          </svg>
+          <span>Sign in with a passkey</span>
+        </button>
         <p id="passkey-login-status" class="account-muted" role="status" aria-live="polite"></p>
         <div class="auth-divider">or use your password</div>
 
@@ -2727,12 +2748,12 @@ function renderRegister(opts: {
           </div>
           ` : ""}
 
-          <div class="form-group" style="margin-bottom: 14px;">
-            <label class="checkbox-label" style="font-size: 0.8125rem;">
+          <div class="form-group" style="margin-bottom: 8px;">
+            <label class="checkbox-label" style="font-size: 0.75rem; line-height: 1.35;">
               <input type="checkbox" name="terms_accepted" required />
               <span>I agree to the <a href="${escapeHtml(legal.terms.url)}" target="_blank" rel="noopener noreferrer" class="auth-link" aria-label="Terms of Service, version ${escapeHtml(legal.terms.version)} (opens in a new tab)">Terms of Service</a> and acknowledge the <a href="${escapeHtml(legal.privacy.url)}" target="_blank" rel="noopener noreferrer" class="auth-link" aria-label="Privacy Policy, version ${escapeHtml(legal.privacy.version)} (opens in a new tab)">Privacy Policy</a>.</span>
             </label>
-            <p class="strength-label" style="margin-top:8px">Terms ${escapeHtml(legal.terms.version)} and Privacy ${escapeHtml(legal.privacy.version)}, effective ${escapeHtml(legal.privacy.effectiveDate)}.</p>
+            <p class="strength-label" style="margin-top: 3px; font-size: 0.6875rem;">Terms ${escapeHtml(legal.terms.version)} &bull; Privacy ${escapeHtml(legal.privacy.version)}, effective ${escapeHtml(legal.privacy.effectiveDate)}.</p>
           </div>
 
           <button type="submit" class="btn-submit">
