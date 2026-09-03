@@ -20,12 +20,32 @@ import {
   requirePublicHttpsUrl,
   type OidcDiscoveryDocument,
 } from "@kannan19302/auth";
+import { emitAuthAudit } from "../../common/audit/emit-auth-audit";
 
 interface SsoProfile {
   email: string;
   firstName?: string;
   lastName?: string;
   provider: "SAML" | "OIDC";
+}
+
+export class UniErpSaml extends SAML {
+  async generateAuthnRequest(): Promise<{ requestXml: string; requestId: string }> {
+    const requestXml = await this.generateAuthorizeRequestAsync(this.options.passive ?? false, false);
+    const idMatch = requestXml.match(/ID="([^"]+)"/);
+    const requestId = idMatch && idMatch[1] ? idMatch[1] : `_req_${randomBytes(16).toString("hex")}`;
+    return { requestXml, requestId };
+  }
+
+  async buildAuthorizeRedirectUrl(requestXml: string, relayState: string): Promise<string> {
+    const operation = "authorize";
+    return this._requestToUrlAsync(
+      requestXml,
+      null,
+      operation,
+      this._getAdditionalParams(relayState, operation, {}),
+    );
+  }
 }
 
 /**
@@ -114,45 +134,109 @@ export class SsoService {
 
   // ── SAML ──────────────────────────────────────────────────────────────
 
-  private buildSamlClient(tenantSlug: string, config: { samlEntryPoint: string | null; samlIssuer: string | null; samlCert: string | null }): SAML {
+  private buildSamlClient(tenantSlug: string, config: { samlEntryPoint: string | null; samlIssuer: string | null; samlCert: string | null }): UniErpSaml {
     if (!config.samlEntryPoint || !config.samlCert) {
       throw new BadRequestException("SAML configuration is incomplete for this organization.");
     }
-    return new SAML({
+    const spEntityId = config.samlIssuer || `unierp-${tenantSlug}`;
+    return new UniErpSaml({
       entryPoint: config.samlEntryPoint,
-      issuer: config.samlIssuer || `unierp-${tenantSlug}`,
+      issuer: spEntityId,
       callbackUrl: this.samlCallbackUrl(tenantSlug),
       idpCert: config.samlCert,
       wantAssertionsSigned: true,
       wantAuthnResponseSigned: false,
+      audience: spEntityId,
+      acceptedClockSkewMs: 30_000,
     });
   }
 
-  async buildSamlLoginUrl(tenantSlug: string, returnTo: string): Promise<string> {
+  async buildSamlLoginUrl(tenantSlug: string, returnTo?: string): Promise<string> {
     const tenant = await this.requireTenant(tenantSlug);
     await assertSsoFederationEnabled(tenant.id);
     const config = await this.requireConfig(tenant.id, "SAML");
     const saml = this.buildSamlClient(tenantSlug, config);
-    // RelayState round-trips through the IdP unmodified — it's what carries
-    // `returnTo` back to us, since the IdP has no notion of it otherwise.
-    return saml.getAuthorizeUrlAsync(returnTo, undefined, {});
+
+    // Generate request XML to extract request ID for assertion correlation
+    const { requestXml, requestId } = await saml.generateAuthnRequest();
+
+    // Create opaque server-side RelayState transaction binding
+    const relayState = await this.externalAuthStore.createSamlFederationTransaction({
+      tenantSlug,
+      returnTo: returnTo || "/",
+      requestId,
+      issuedAt: Date.now(),
+    });
+
+    return saml.buildAuthorizeRedirectUrl(requestXml, relayState);
   }
 
   /**
-   * Verifies the POSTed assertion's signature against the tenant's stored
-   * `samlCert` — the fix for the disabled controller's original hole. A
-   * forged or unsigned assertion fails `validatePostResponseAsync` and
-   * throws before any session is minted.
+   * Verifies the POSTed assertion's signature, replay, recipient, destination,
+   * audience, time-window, and assertion-correlation against the tenant's stored
+   * configuration and server-side state transaction.
    */
   async handleSamlCallback(
     tenantSlug: string,
     body: Record<string, string>,
     context?: SessionContext,
   ) {
+    const relayState = String(body?.RelayState || "");
+    const transaction = await this.externalAuthStore.consumeSamlFederationTransaction(relayState);
+    if (!transaction || transaction.tenantSlug !== tenantSlug) {
+      throw new UnauthorizedException("Invalid or expired sign-in state.");
+    }
+
     const tenant = await this.requireTenant(tenantSlug);
     await assertSsoFederationEnabled(tenant.id);
     const config = await this.requireConfig(tenant.id, "SAML");
     const saml = this.buildSamlClient(tenantSlug, config);
+
+    if (!body?.SAMLResponse) {
+      throw new UnauthorizedException("The identity provider did not return an assertion.");
+    }
+
+    // Inspect assertion XML for destination, recipient, audience, correlation and replay checks
+    const rawXml = Buffer.from(body.SAMLResponse, "base64").toString("utf8");
+
+    // 1. InResponseTo assertion correlation check
+    const inResponseToMatch = rawXml.match(/InResponseTo="([^"]+)"/);
+    if (inResponseToMatch && inResponseToMatch[1] !== transaction.requestId) {
+      this.logger.warn(`[sso] SAML InResponseTo mismatch for ${tenantSlug}: expected ${transaction.requestId}, received ${inResponseToMatch[1]}`);
+      throw new UnauthorizedException("SAML assertion response correlation mismatch.");
+    }
+
+    // 2. Destination / Recipient check
+    const expectedAcs = this.samlCallbackUrl(tenantSlug);
+    const destinationMatch = rawXml.match(/Destination="([^"]+)"/);
+    if (destinationMatch && destinationMatch[1] !== expectedAcs) {
+      this.logger.warn(`[sso] SAML Destination mismatch for ${tenantSlug}: expected ${expectedAcs}, received ${destinationMatch[1]}`);
+      throw new UnauthorizedException("SAML assertion destination mismatch.");
+    }
+    const recipientMatch = rawXml.match(/Recipient="([^"]+)"/);
+    if (recipientMatch && recipientMatch[1] !== expectedAcs) {
+      this.logger.warn(`[sso] SAML Recipient mismatch for ${tenantSlug}: expected ${expectedAcs}, received ${recipientMatch[1]}`);
+      throw new UnauthorizedException("SAML assertion recipient mismatch.");
+    }
+
+    // 3. Audience check
+    const audienceMatch = rawXml.match(/<saml(?:2)?:Audience>([^<]+)<\/saml(?:2)?:Audience>/);
+    const expectedAudience = config.samlIssuer || `unierp-${tenantSlug}`;
+    if (audienceMatch && audienceMatch[1] !== expectedAudience) {
+      this.logger.warn(`[sso] SAML Audience mismatch for ${tenantSlug}: expected ${expectedAudience}, received ${audienceMatch[1]}`);
+      throw new UnauthorizedException("SAML assertion audience mismatch.");
+    }
+
+    // 4. Assertion ID replay defense
+    const assertionIdMatch = rawXml.match(/<saml(?:2)?:Assertion[^>]*\sID="([^"]+)"/);
+    if (assertionIdMatch && assertionIdMatch[1]) {
+      const assertionId = assertionIdMatch[1];
+      const fresh = await this.externalAuthStore.recordSamlAssertion(assertionId);
+      if (!fresh) {
+        this.logger.warn(`[sso] Replayed SAML assertion ${assertionId} rejected for ${tenantSlug}`);
+        throw new UnauthorizedException("Replayed SAML assertion rejected.");
+      }
+    }
 
     let profile;
     try {
@@ -180,9 +264,19 @@ export class SsoService {
       provider: "SAML",
     });
 
+    await emitAuthAudit({
+      tenantId: tenant.id,
+      userId: user.id,
+      action: "SSO_FEDERATION_LOGIN_SUCCESS",
+      entityType: "SsoConfig",
+      entityId: config.id,
+      changes: { provider: "SAML", email: user.email },
+      ipAddress: context?.ipAddress ?? undefined,
+    });
+
     return {
       session: await this.authService.issueSession(user, context, { realm: "tenant" }),
-      returnTo: (body.RelayState as string) || undefined,
+      returnTo: transaction.returnTo || undefined,
     };
   }
 
@@ -285,6 +379,16 @@ export class SsoService {
       provider: "OIDC",
     });
 
+    await emitAuthAudit({
+      tenantId: tenant.id,
+      userId: user.id,
+      action: "SSO_FEDERATION_LOGIN_SUCCESS",
+      entityType: "SsoConfig",
+      entityId: config.id,
+      changes: { provider: "OIDC", email: user.email },
+      ipAddress: context?.ipAddress ?? undefined,
+    });
+
     return {
       session: await this.authService.issueSession(user, context, { realm: "tenant" }),
       returnTo: transaction.returnTo,
@@ -382,6 +486,15 @@ export class SsoService {
               data: { userId: existing.id, roleId: viewerRole.id },
             });
           }
+
+          await emitAuthAudit({
+            tenantId,
+            userId: existing.id,
+            action: "SSO_USER_PROVISIONED",
+            entityType: "User",
+            entityId: existing.id,
+            changes: { email: profile.email, provider: profile.provider },
+          });
         }
         return existing;
       },

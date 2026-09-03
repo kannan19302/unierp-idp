@@ -23,6 +23,9 @@ export async function emitAuthAudit(params: {
   changes?: Record<string, unknown>;
   ipAddress?: string;
 }): Promise<void> {
+  if (!prisma?.auditLog?.create) {
+    return;
+  }
   await runWithTenantSession(
     { tenantId: params.tenantId, userId: params.userId },
     () =>

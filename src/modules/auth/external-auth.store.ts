@@ -24,6 +24,14 @@ export interface FederationTransaction {
   codeVerifier: string;
 }
 
+/** One-time inbound SAML federation transaction binding. */
+export interface SamlFederationTransaction {
+  tenantSlug: string;
+  returnTo: string;
+  requestId: string;
+  issuedAt: number;
+}
+
 export interface ExternalRegistrationProfile {
   provider: ExternalAuthProvider;
   subject: string;
@@ -96,6 +104,40 @@ export class ExternalAuthStore implements OnModuleDestroy {
     handle: string,
   ): Promise<FederationTransaction | null> {
     return this.consume<FederationTransaction>("federation", handle);
+  }
+
+  async createSamlFederationTransaction(value: SamlFederationTransaction): Promise<string> {
+    return this.create("saml-federation", value, TRANSACTION_TTL_SECONDS);
+  }
+
+  async consumeSamlFederationTransaction(
+    handle: string,
+  ): Promise<SamlFederationTransaction | null> {
+    return this.consume<SamlFederationTransaction>("saml-federation", handle);
+  }
+
+  /**
+   * Records a SAML assertion ID to prevent replay attacks.
+   * Returns true if recorded (fresh assertion), false if already seen (replayed).
+   */
+  async recordSamlAssertion(assertionId: string, ttlSeconds = 10 * 60): Promise<boolean> {
+    const key = `external-auth:saml-assertion:${createHash("sha256").update(assertionId).digest("base64url")}`;
+    if (this.redis) {
+      const result = await this.redis.set(key, "1", "EX", ttlSeconds, "NX");
+      return result === "OK";
+    }
+    this.pruneFallback();
+    if (this.fallback.has(key)) {
+      const entry = this.fallback.get(key);
+      if (entry && entry.expiresAt > Date.now()) {
+        return false;
+      }
+    }
+    this.fallback.set(key, {
+      expiresAt: Date.now() + ttlSeconds * 1000,
+      value: "1",
+    });
+    return true;
   }
 
   async createRegistration(
