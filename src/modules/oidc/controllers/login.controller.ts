@@ -1267,12 +1267,24 @@ const BASE_STYLES = `
     z-index: 10;
   }
   .auth-container--register {
-    max-width: 432px;
+    max-width: 760px;
+    width: 100%;
+  }
+  .form-grid--two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 18px;
+  }
+  @media (max-width: 640px) {
+    .form-grid--two-col {
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
   }
 
   /* Form Panel */
   .auth-form-panel {
-    padding: 20px 22px 18px;
+    padding: 24px 28px 22px;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -2736,21 +2748,34 @@ function renderRegister(opts: {
           <input type="hidden" name="external_auth" value="${escapeHtml(opts.externalAuth || "")}"/>
           <input type="text" name="hp_website" class="hp-field" tabindex="-1" autocomplete="off"/>
 
-          <div class="form-group">
-            <label class="form-label" for="reg-org">Organization Name</label>
-            <input 
-              id="reg-org" 
-              type="text" 
-              name="organization_name" 
-              autocomplete="organization"
-              required 
-              placeholder="Acme Global Inc." 
-              value="${escapeHtml(v.organization_name || "")}" 
-              class="form-input"
-            />
-          </div>
+          <div class="form-grid--two-col">
+            <div class="form-group">
+              <label class="form-label" for="reg-org">Organization Name</label>
+              <input 
+                id="reg-org" 
+                type="text" 
+                name="organization_name" 
+                autocomplete="organization"
+                required 
+                placeholder="Acme Global Inc." 
+                value="${escapeHtml(v.organization_name || "")}" 
+                class="form-input"
+              />
+            </div>
 
-          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="reg-slug">Workspace Domain Slug</label>
+              <input 
+                id="reg-slug" 
+                type="text" 
+                name="workspace_slug" 
+                autocomplete="off"
+                placeholder="acme-global" 
+                value="${escapeHtml(v.workspace_slug || "")}" 
+                class="form-input"
+              />
+            </div>
+
             <div class="form-group">
               <label class="form-label" for="reg-first">First Name</label>
               <input 
@@ -2764,6 +2789,7 @@ function renderRegister(opts: {
                 class="form-input"
               />
             </div>
+
             <div class="form-group">
               <label class="form-label" for="reg-last">Last Name</label>
               <input 
@@ -2777,61 +2803,100 @@ function renderRegister(opts: {
                 class="form-input"
               />
             </div>
-          </div>
 
-          <div class="form-group">
-            <label class="form-label" for="reg-email">Corporate Work Email</label>
-            <input 
-              id="reg-email" 
-              type="email" 
-              name="email" 
-              required 
-              autocomplete="email" 
-              placeholder="jane@acme.com" 
-              value="${escapeHtml(v.email || "")}" 
-              class="form-input"
-              ${opts.externalAuth ? "readonly" : ""}
-            />
-          </div>
-
-          ${!opts.externalAuth ? `
-          <div class="form-group">
-            <label class="form-label" for="reg-password">Password</label>
-            <div class="input-wrapper">
+            <div class="form-group">
+              <label class="form-label" for="reg-email">Corporate Work Email</label>
               <input 
-                id="reg-password" 
-                type="password" 
-                name="password" 
+                id="reg-email" 
+                type="email" 
+                name="email" 
                 required 
-                autocomplete="new-password" 
-                placeholder="Minimum 8 characters" 
+                autocomplete="email" 
+                placeholder="jane@acme.com" 
+                value="${escapeHtml(v.email || "")}" 
                 class="form-input"
-                data-password-strength
+                ${opts.externalAuth ? "readonly" : ""}
               />
-              <button 
-                type="button" 
-                class="input-icon-btn" 
-                data-password-target="reg-password"
-                aria-label="Show password"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                  <circle cx="12" cy="12" r="3"></circle>
-                </svg>
-              </button>
             </div>
-            
-            <div class="strength-container">
-              <div class="strength-bars">
-                <div class="strength-bar" id="bar-1"></div>
-                <div class="strength-bar" id="bar-2"></div>
-                <div class="strength-bar" id="bar-3"></div>
-                <div class="strength-bar" id="bar-4"></div>
+
+            <div class="form-group">
+              <label class="form-label" for="reg-phone">Corporate Mobile Number</label>
+              <input 
+                id="reg-phone" 
+                type="tel" 
+                name="phone" 
+                autocomplete="tel" 
+                placeholder="+1 (555) 000-0000" 
+                value="${escapeHtml(v.phone || "")}" 
+                class="form-input"
+              />
+            </div>
+
+            ${!opts.externalAuth ? `
+            <div class="form-group">
+              <label class="form-label" for="reg-password">Password</label>
+              <div class="input-wrapper">
+                <input 
+                  id="reg-password" 
+                  type="password" 
+                  name="password" 
+                  required 
+                  autocomplete="new-password" 
+                  placeholder="Minimum 8 characters" 
+                  class="form-input"
+                  data-password-strength
+                />
+                <button 
+                  type="button" 
+                  class="input-icon-btn" 
+                  data-password-target="reg-password"
+                  aria-label="Show password"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
               </div>
-              <span class="strength-label" id="strength-text">Password strength: requires 8+ chars</span>
+              
+              <div class="strength-container">
+                <div class="strength-bars">
+                  <div class="strength-bar" id="bar-1"></div>
+                  <div class="strength-bar" id="bar-2"></div>
+                  <div class="strength-bar" id="bar-3"></div>
+                  <div class="strength-bar" id="bar-4"></div>
+                </div>
+                <span class="strength-label" id="strength-text">Password strength: requires 8+ chars</span>
+              </div>
             </div>
+
+            <div class="form-group">
+              <label class="form-label" for="reg-confirm-password">Confirm Password</label>
+              <div class="input-wrapper">
+                <input 
+                  id="reg-confirm-password" 
+                  type="password" 
+                  name="confirm_password" 
+                  required 
+                  autocomplete="new-password" 
+                  placeholder="Re-enter password" 
+                  class="form-input"
+                />
+                <button 
+                  type="button" 
+                  class="input-icon-btn" 
+                  data-password-target="reg-confirm-password"
+                  aria-label="Show confirm password"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            ` : ""}
           </div>
-          ` : ""}
 
           <div class="form-group" style="margin-bottom: 8px;">
             <label class="checkbox-label" style="font-size: 0.75rem; line-height: 1.35;">
