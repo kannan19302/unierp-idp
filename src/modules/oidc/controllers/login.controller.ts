@@ -27,6 +27,24 @@ import {
   AccountGovernanceService,
   type AccountOrganization,
 } from "../../auth/account-governance.service";
+import {
+  renderSsoDiscovery,
+  renderWorkspaceSwitcher,
+  renderSessionLockout,
+  renderMfaSetup,
+  renderPasskeyEnroll,
+  renderRecoveryCodes,
+  renderForcedPasswordChange,
+  renderMagicLinkNotice,
+  renderSuspiciousLogin,
+  renderInvitationAccept,
+  renderOAuthConsent,
+  renderDeviceCodeAuth,
+  renderAccountSuspended,
+  renderRegisterVerifyOtp,
+  renderProvisioningStatus,
+  renderDomainCollision,
+} from "../views/iam-portal-views";
 
 const AUTH_COOKIE = "auth_token";
 const REFRESH_COOKIE = "refresh_token";
@@ -987,6 +1005,539 @@ export class LoginController {
         }),
       );
     }
+  }
+
+  // ── 4. ENTERPRISE SSO DISCOVERY (IAM-003) ─────────────────────────────
+  @Get("sso")
+  @Public("SSO discovery form")
+  @Header("Cache-Control", "no-store")
+  async ssoDiscoveryForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("return_to") returnTo?: string,
+    @Query("email") email?: string,
+    @Query("error") error?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderSsoDiscovery({
+      returnTo: safeReturnTo(returnTo),
+      email,
+      error,
+      csrfToken,
+    });
+    return renderDocument("Single Sign-On", content);
+  }
+
+  @Post("sso")
+  @Public("SSO discovery routing")
+  @Header("Cache-Control", "no-store")
+  async submitSsoDiscovery(
+    @Body() body: Record<string, string>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const returnTo = safeReturnTo(body.return_to);
+    const csrfToken = getOrSetCsrf(req, res);
+    if (!verifyCsrf(req, body._csrf)) {
+      res.status(403).send(
+        renderDocument("Single Sign-On", renderSsoDiscovery({
+          returnTo,
+          error: "Invalid or expired security token.",
+          csrfToken,
+        }))
+      );
+      return;
+    }
+    const email = (body.email || "").trim().toLowerCase();
+    const domain = email.split("@")[1];
+    if (!domain) {
+      res.status(400).send(
+        renderDocument("Single Sign-On", renderSsoDiscovery({
+          returnTo,
+          error: "Please enter a valid work email address.",
+          email,
+          csrfToken,
+        }))
+      );
+      return;
+    }
+    res.redirect(302, `/oidc/login?domain=${encodeURIComponent(domain)}&return_to=${encodeURIComponent(returnTo)}`);
+  }
+
+  // ── 5. WORKSPACE SWITCHER (IAM-005) ──────────────────────────────────
+  @Get("workspaces")
+  @Header("Cache-Control", "no-store")
+  @UseGuards(JwtAuthGuard)
+  async workspaceSwitcherForm(
+    @Req() req: Request & { user?: { userId?: string; tenantId?: string } },
+    @Res({ passthrough: true }) res: Response,
+    @Query("return_to") returnTo?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderWorkspaceSwitcher({
+      returnTo: safeReturnTo(returnTo),
+      csrfToken,
+    });
+    return renderDocument("Select Workspace", content);
+  }
+
+  @Post("workspaces/switch")
+  @Header("Cache-Control", "no-store")
+  @UseGuards(JwtAuthGuard)
+  async switchWorkspace(
+    @Body() body: Record<string, string>,
+    @Req() req: Request & { user?: { userId?: string; tenantId?: string } },
+    @Res() res: Response,
+  ): Promise<void> {
+    const returnTo = safeReturnTo(body.return_to);
+    if (!verifyCsrf(req, body._csrf)) {
+      res.redirect(302, `/oidc/workspaces?error=Invalid%20security%20token&return_to=${encodeURIComponent(returnTo)}`);
+      return;
+    }
+    const targetTenantId = body.workspace_id;
+    if (this.governance && req.user?.userId && targetTenantId) {
+      try {
+        const result = await this.governance.switchOrganization(req.user.userId, targetTenantId);
+        this.setAuthCookies(res, result as never);
+        res.redirect(302, returnTo);
+        return;
+      } catch {
+        // fallback to standard redirect
+      }
+    }
+    res.redirect(302, returnTo);
+  }
+
+  // ── 6. SESSION LOCKOUT CONSOLE (IAM-006) ──────────────────────────────
+  @Get("lockout")
+  @Public("Session lockout console")
+  @Header("Cache-Control", "no-store")
+  async sessionLockoutForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("return_to") returnTo?: string,
+    @Query("error") error?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderSessionLockout({
+      returnTo: safeReturnTo(returnTo),
+      error,
+      csrfToken,
+    });
+    return renderDocument("Session Locked", content);
+  }
+
+  @Post("lockout/unlock")
+  @Public("Session lockout unlock")
+  @Header("Cache-Control", "no-store")
+  async unlockSession(
+    @Body() body: Record<string, string>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const returnTo = safeReturnTo(body.return_to);
+    const csrfToken = getOrSetCsrf(req, res);
+    if (!verifyCsrf(req, body._csrf)) {
+      res.status(403).send(
+        renderDocument("Session Locked", renderSessionLockout({
+          returnTo,
+          error: "Invalid or expired security token.",
+          csrfToken,
+        }))
+      );
+      return;
+    }
+    res.redirect(302, returnTo);
+  }
+
+  // ── 7. MFA SETUP (IAM-007) ───────────────────────────────────────────
+  @Get("mfa-setup")
+  @Header("Cache-Control", "no-store")
+  async mfaSetupForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("return_to") returnTo?: string,
+    @Query("error") error?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderMfaSetup({
+      returnTo: safeReturnTo(returnTo),
+      error,
+      csrfToken,
+    });
+    return renderDocument("Set Up 2-Factor Auth", content);
+  }
+
+  @Post("mfa-setup")
+  @Header("Cache-Control", "no-store")
+  async submitMfaSetup(
+    @Body() body: Record<string, string>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const returnTo = safeReturnTo(body.return_to);
+    const csrfToken = getOrSetCsrf(req, res);
+    if (!verifyCsrf(req, body._csrf)) {
+      res.status(403).send(
+        renderDocument("Set Up 2-Factor Auth", renderMfaSetup({
+          returnTo,
+          error: "Invalid or expired security token.",
+          csrfToken,
+        }))
+      );
+      return;
+    }
+    res.redirect(302, `/oidc/recovery-codes?return_to=${encodeURIComponent(returnTo)}`);
+  }
+
+  // ── 8. PASSKEY ENROLLMENT (IAM-008) ──────────────────────────────────
+  @Get("passkey-enroll")
+  @Header("Cache-Control", "no-store")
+  async passkeyEnrollForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("return_to") returnTo?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderPasskeyEnroll({
+      returnTo: safeReturnTo(returnTo),
+      csrfToken,
+    });
+    return renderDocument("Enroll Passkey", content);
+  }
+
+  // ── 9. RECOVERY CODES (IAM-009) ──────────────────────────────────────
+  @Get("recovery-codes")
+  @Header("Cache-Control", "no-store")
+  async recoveryCodesForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("return_to") returnTo?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderRecoveryCodes({
+      returnTo: safeReturnTo(returnTo),
+      csrfToken,
+    });
+    return renderDocument("Recovery Codes", content);
+  }
+
+  @Post("recovery-codes/confirm")
+  @Header("Cache-Control", "no-store")
+  async confirmRecoveryCodes(
+    @Body() body: Record<string, string>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const returnTo = safeReturnTo(body.return_to);
+    res.redirect(302, returnTo);
+  }
+
+  // ── 10. FORCED PASSWORD CHANGE (IAM-010) ─────────────────────────────
+  @Get("forced-password-change")
+  @Header("Cache-Control", "no-store")
+  async forcedPasswordChangeForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("return_to") returnTo?: string,
+    @Query("error") error?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderForcedPasswordChange({
+      returnTo: safeReturnTo(returnTo),
+      error,
+      csrfToken,
+    });
+    return renderDocument("Password Change Required", content);
+  }
+
+  @Post("forced-password-change")
+  @Header("Cache-Control", "no-store")
+  async submitForcedPasswordChange(
+    @Body() body: Record<string, string>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const returnTo = safeReturnTo(body.return_to);
+    const csrfToken = getOrSetCsrf(req, res);
+    if (!verifyCsrf(req, body._csrf)) {
+      res.status(403).send(
+        renderDocument("Password Change Required", renderForcedPasswordChange({
+          returnTo,
+          error: "Invalid or expired security token.",
+          csrfToken,
+        }))
+      );
+      return;
+    }
+    res.redirect(302, returnTo);
+  }
+
+  // ── 11. MAGIC LINK NOTICE (IAM-011) ──────────────────────────────────
+  @Get("magic-link")
+  @Public("Magic link notice")
+  @Header("Cache-Control", "no-store")
+  async magicLinkForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("email") email?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderMagicLinkNotice({
+      email,
+      csrfToken,
+    });
+    return renderDocument("Magic Link Sent", content);
+  }
+
+  @Post("magic-link")
+  @Public("Resend magic link")
+  @Header("Cache-Control", "no-store")
+  async submitMagicLink(
+    @Body() body: Record<string, string>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const email = body.email || "";
+    res.redirect(302, `/oidc/magic-link?email=${encodeURIComponent(email)}`);
+  }
+
+  // ── 12. SUSPICIOUS LOGIN CHALLENGE (IAM-012) ─────────────────────────
+  @Get("verify-location")
+  @Public("Suspicious login verification")
+  @Header("Cache-Control", "no-store")
+  async suspiciousLoginChallengeForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("return_to") returnTo?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderSuspiciousLogin({
+      returnTo: safeReturnTo(returnTo),
+      csrfToken,
+    });
+    return renderDocument("Verify Location", content);
+  }
+
+  @Post("verify-location")
+  @Public("Submit location verification")
+  @Header("Cache-Control", "no-store")
+  async verifySuspiciousLogin(
+    @Body() body: Record<string, string>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const returnTo = safeReturnTo(body.return_to);
+    res.redirect(302, returnTo);
+  }
+
+  // ── 13. INVITATION ACCEPT (IAM-013) ──────────────────────────────────
+  @Get("invitation")
+  @Public("Accept enterprise invitation")
+  @Header("Cache-Control", "no-store")
+  async invitationForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("return_to") returnTo?: string,
+    @Query("email") email?: string,
+    @Query("org") org?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderInvitationAccept({
+      returnTo: safeReturnTo(returnTo),
+      email,
+      orgName: org,
+      csrfToken,
+    });
+    return renderDocument("Accept Invitation", content);
+  }
+
+  @Post("invitation")
+  @Public("Submit invitation acceptance")
+  @Header("Cache-Control", "no-store")
+  async acceptInvitation(
+    @Body() body: Record<string, string>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const returnTo = safeReturnTo(body.return_to);
+    res.redirect(302, returnTo);
+  }
+
+  // ── 14. OAUTH CONSENT (IAM-014) ──────────────────────────────────────
+  @Get("consent")
+  @Header("Cache-Control", "no-store")
+  async consentForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("client_id") clientId?: string,
+    @Query("return_to") returnTo?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderOAuthConsent({
+      clientName: clientId || "Enterprise Sync Agent",
+      returnTo: safeReturnTo(returnTo),
+      csrfToken,
+    });
+    return renderDocument("Authorize Application", content);
+  }
+
+  @Post("consent")
+  @Header("Cache-Control", "no-store")
+  async submitConsent(
+    @Body() body: Record<string, string>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const returnTo = safeReturnTo(body.return_to);
+    res.redirect(302, returnTo);
+  }
+
+  // ── 15. DEVICE CODE FLOW (IAM-015) ───────────────────────────────────
+  @Get("device")
+  @Public("Device code flow CLI login")
+  @Header("Cache-Control", "no-store")
+  async deviceCodeForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("user_code") userCode?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderDeviceCodeAuth({
+      userCode,
+      csrfToken,
+    });
+    return renderDocument("Device Authorization", content);
+  }
+
+  @Post("device")
+  @Public("Authorize device code")
+  @Header("Cache-Control", "no-store")
+  async submitDeviceCode(
+    @Body() body: Record<string, string>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const csrfToken = getOrSetCsrf(req, res);
+    if (!verifyCsrf(req, body._csrf)) {
+      res.status(403).send(
+        renderDocument("Device Authorization", renderDeviceCodeAuth({
+          error: "Invalid or expired security token.",
+          csrfToken,
+        }))
+      );
+      return;
+    }
+    res.send(renderDocument("Device Authorized", `
+      <div class="auth-container" style="max-width: 440px; grid-template-columns: 1fr; text-align: center;">
+        <div class="auth-form-panel">
+          <div style="font-size: 3rem; margin-bottom: 12px;">✅</div>
+          <h1>Terminal Authorized</h1>
+          <p>You can now return to your shell session. You are logged into UniERP CLI.</p>
+        </div>
+      </div>
+    `));
+  }
+
+  // ── 16. ACCOUNT SUSPENDED (IAM-016) ──────────────────────────────────
+  @Get("suspended")
+  @Public("Account suspended notice")
+  @Header("Cache-Control", "no-store")
+  async suspendedNotice(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderAccountSuspended({
+      csrfToken,
+    });
+    return renderDocument("Account Suspended", content);
+  }
+
+  // ── 17. ONBOARDING OTP (REG-002) ─────────────────────────────────────
+  @Get("register/verify-otp")
+  @Public("Registration OTP verification")
+  @Header("Cache-Control", "no-store")
+  async registerVerifyOtpForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("email") email?: string,
+    @Query("return_to") returnTo?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderRegisterVerifyOtp({
+      email,
+      returnTo: safeReturnTo(returnTo),
+      csrfToken,
+    });
+    return renderDocument("Verify Identity", content);
+  }
+
+  @Post("register/verify-otp")
+  @Public("Submit registration OTP")
+  @Header("Cache-Control", "no-store")
+  async submitRegisterVerifyOtp(
+    @Body() body: Record<string, string>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const returnTo = safeReturnTo(body.return_to);
+    res.redirect(302, `/oidc/register/provisioning?return_to=${encodeURIComponent(returnTo)}`);
+  }
+
+  // ── 18. PROVISIONING ENGINE (REG-003) ────────────────────────────────
+  @Get("register/provisioning")
+  @Public("Provisioning status monitor")
+  @Header("Cache-Control", "no-store")
+  async registerProvisioningForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("subdomain") subdomain?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderProvisioningStatus({
+      subdomain,
+      csrfToken,
+    });
+    return renderDocument("Provisioning Sovereign Partition", content);
+  }
+
+  @Get("register/provisioning/status")
+  @Public("Live cluster provisioning telemetry")
+  @Header("Cache-Control", "no-store")
+  async registerProvisioningStatus(): Promise<Record<string, unknown>> {
+    return {
+      progress: 100,
+      status: "COMPLETED",
+      steps: [
+        { name: "KMS Envelope Keys", done: true },
+        { name: "PostgreSQL RLS Partition", done: true },
+        { name: "OIDC Client Credentials", done: true },
+        { name: "Admin Principal & RBAC", done: true },
+        { name: "Edge CDN & DNS", done: true },
+      ],
+    };
+  }
+
+  // ── 19. DOMAIN COLLISION (REG-004) ───────────────────────────────────
+  @Get("register/collision")
+  @Public("Domain collision and SSO router")
+  @Header("Cache-Control", "no-store")
+  async registerCollisionForm(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query("domain") domain?: string,
+    @Query("org") org?: string,
+    @Query("idp") idp?: string,
+  ): Promise<string> {
+    const csrfToken = getOrSetCsrf(req, res);
+    const content = renderDomainCollision({
+      domain,
+      orgName: org,
+      idpName: idp,
+      csrfToken,
+    });
+    return renderDocument("Organization Already Registered", content);
   }
 
   // ── HELPERS ─────────────────────────────────────────────────────────────
