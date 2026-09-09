@@ -184,6 +184,8 @@ async function bootstrap() {
   // Every route added to the OIDC module must be listed here.
   app.setGlobalPrefix("api/v1", {
     exclude: [
+      "",
+      "/",
       "metrics",
       "swagger",
       "swagger-json",

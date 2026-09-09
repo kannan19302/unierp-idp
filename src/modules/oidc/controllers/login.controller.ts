@@ -1086,7 +1086,7 @@ export class LoginController {
   @UseGuards(JwtAuthGuard)
   async switchWorkspace(
     @Body() body: Record<string, string>,
-    @Req() req: Request & { user?: { userId?: string; tenantId?: string } },
+    @Req() req: Request & { user?: { userId?: string; tenantId?: string; sid?: string } },
     @Res() res: Response,
   ): Promise<void> {
     const returnTo = safeReturnTo(body.return_to);
@@ -1097,7 +1097,12 @@ export class LoginController {
     const targetTenantId = body.workspace_id;
     if (this.governance && req.user?.userId && targetTenantId) {
       try {
-        const result = await this.governance.switchOrganization(req.user.userId, targetTenantId);
+        const result = await this.governance.switchOrganization({
+          userId: req.user.userId,
+          tenantId: req.user.tenantId || "",
+          sid: req.user.sid || "",
+          targetTenantId,
+        });
         this.setAuthCookies(res, result as never);
         res.redirect(302, returnTo);
         return;
@@ -1591,7 +1596,8 @@ export function safeReturnTo(raw?: string): string {
       parsed.hostname === "localhost" ||
       parsed.hostname === "127.0.0.1" ||
       parsed.hostname.endsWith(".uni-erp.com") ||
-      parsed.hostname.endsWith(".unierp.internal");
+      parsed.hostname.endsWith(".unierp.internal") ||
+      parsed.hostname.endsWith(".unierp.cloud");
     if (isAllowedHost) return raw;
   } catch {
     // Invalid absolute URLs are intentionally reduced to the safe root route.
@@ -1616,7 +1622,7 @@ function escapeHtml(s?: string): string {
 const BASE_STYLES = `
   :root, [data-theme="light"] {
     --bg-page: #f8fafc;
-    --bg-mesh-1: rgba(99, 102, 241, 0.08);
+    --bg-mesh-1: rgba(2, 132, 199, 0.08);
     --bg-mesh-2: rgba(14, 165, 233, 0.06);
     --bg-card: #ffffff;
     --bg-hero: #f1f5f9;
@@ -1635,7 +1641,7 @@ const BASE_STYLES = `
     --border-subtle: #f1f5f9;
     --border-input: #cbd5e1;
     --border-input-hover: #94a3b8;
-    --border-input-focus: #4f46e5;
+    --border-input-focus: #0284c7;
     --border-btn-sec: #e2e8f0;
     --border-btn-sec-hover: #cbd5e1;
 
@@ -1646,12 +1652,12 @@ const BASE_STYLES = `
     --text-placeholder: #94a3b8;
     --text-btn-sec: #1e293b;
 
-    --brand-primary: #4f46e5;
-    --brand-primary-hover: #4338ca;
-    --brand-accent: #6366f1;
-    --brand-light: #eef2ff;
-    --brand-text-on-light: #4338ca;
-    --brand-ring: rgba(79, 70, 229, 0.16);
+    --brand-primary: #0284c7;
+    --brand-primary-hover: #0369a1;
+    --brand-accent: #38bdf8;
+    --brand-light: #f0f9ff;
+    --brand-text-on-light: #0369a1;
+    --brand-ring: rgba(2, 132, 199, 0.2);
 
     --success-bg: #ecfdf5;
     --success-border: #a7f3d0;
@@ -1665,14 +1671,14 @@ const BASE_STYLES = `
 
     --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
     --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.06), 0 2px 4px -2px rgba(15, 23, 42, 0.04);
-    --shadow-card: 0 20px 25px -5px rgba(15, 23, 42, 0.06), 0 8px 10px -6px rgba(15, 23, 42, 0.04);
-    --shadow-btn: 0 2px 4px rgba(79, 70, 229, 0.2);
+    --shadow-card: 0 20px 25px -5px rgba(15, 23, 42, 0.08), 0 8px 10px -6px rgba(15, 23, 42, 0.04);
+    --shadow-btn: 0 2px 6px rgba(2, 132, 199, 0.25);
   }
 
   [data-theme="dark"] {
     --bg-page: #0b0f19;
-    --bg-mesh-1: rgba(99, 102, 241, 0.12);
-    --bg-mesh-2: rgba(14, 165, 233, 0.08);
+    --bg-mesh-1: rgba(56, 189, 248, 0.12);
+    --bg-mesh-2: rgba(2, 132, 199, 0.08);
     --bg-card: #111827;
     --bg-hero: #0f172a;
     --bg-hero-subtle: #1e293b;
@@ -1690,7 +1696,7 @@ const BASE_STYLES = `
     --border-subtle: #1f2937;
     --border-input: #374151;
     --border-input-hover: #4b5563;
-    --border-input-focus: #6366f1;
+    --border-input-focus: #38bdf8;
     --border-btn-sec: #374151;
     --border-btn-sec-hover: #4b5563;
 
@@ -1701,12 +1707,12 @@ const BASE_STYLES = `
     --text-placeholder: #64748b;
     --text-btn-sec: #f8fafc;
 
-    --brand-primary: #6366f1;
-    --brand-primary-hover: #4f46e5;
-    --brand-accent: #818cf8;
-    --brand-light: #1e1b4b;
-    --brand-text-on-light: #a5b4fc;
-    --brand-ring: rgba(99, 102, 241, 0.25);
+    --brand-primary: #38bdf8;
+    --brand-primary-hover: #0284c7;
+    --brand-accent: #7dd3fc;
+    --brand-light: #082f49;
+    --brand-text-on-light: #bae6fd;
+    --brand-ring: rgba(56, 189, 248, 0.25);
 
     --success-bg: rgba(16, 185, 129, 0.12);
     --success-border: rgba(16, 185, 129, 0.3);
@@ -1720,8 +1726,8 @@ const BASE_STYLES = `
 
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.2);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-    --shadow-card: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-    --shadow-btn: 0 2px 8px rgba(99, 102, 241, 0.35);
+    --shadow-card: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+    --shadow-btn: 0 2px 8px rgba(56, 189, 248, 0.35);
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1765,13 +1771,11 @@ const BASE_STYLES = `
   .auth-brand-icon {
     width: 28px;
     height: 28px;
-    background: linear-gradient(135deg, #4f46e5 0%, #0ea5e9 100%);
-    border-radius: 6px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #ffffff;
-    box-shadow: 0 2px 6px rgba(79, 70, 229, 0.25);
+    flex-shrink: 0;
   }
   .theme-toggle-btn {
     display: inline-flex;
@@ -1802,14 +1806,14 @@ const BASE_STYLES = `
     outline-offset: 2px;
   }
 
-  /* Centered Card Layout */
+  /* Centered Card Layout — Strata DL 3.0 (Penpot Parity) */
   .auth-container {
     width: 100%;
-    max-width: 396px;
-    margin: 8px auto;
+    max-width: 440px;
+    margin: 16px auto;
     background: var(--bg-card);
     border: 1px solid var(--border-card);
-    border-radius: 12px;
+    border-radius: 16px;
     box-shadow: var(--shadow-card);
     display: flex;
     flex-direction: column;
@@ -1818,13 +1822,13 @@ const BASE_STYLES = `
     z-index: 10;
   }
   .auth-container--register {
-    max-width: 760px;
+    max-width: 600px;
     width: 100%;
   }
   .form-grid--two-col {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 14px 18px;
+    gap: 14px 16px;
   }
   @media (max-width: 640px) {
     .form-grid--two-col {
@@ -1833,118 +1837,202 @@ const BASE_STYLES = `
     }
   }
 
+  /* Stepper Progress Bar — Strata DL 3.0 (REG-001) */
+  .reg-stepper {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    margin-bottom: 24px;
+    padding: 0 8px;
+    box-sizing: border-box;
+  }
+  .reg-step-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    z-index: 1;
+  }
+  .reg-step-circle {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: var(--bg-pill);
+    color: var(--text-muted);
+    border: 1px solid var(--border-card);
+    transition: all 0.2s ease;
+  }
+  .reg-step-circle-active {
+    background: var(--brand-primary);
+    color: #ffffff;
+    border-color: var(--brand-primary);
+    box-shadow: 0 0 0 4px var(--brand-ring);
+  }
+  .reg-step-label {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  .reg-step-label-active {
+    color: var(--brand-primary);
+    font-weight: 600;
+  }
+  .reg-step-line {
+    flex: 1;
+    height: 2px;
+    background: var(--border-card);
+    margin: 0 8px 18px;
+  }
+
+  /* Subdomain Suffix Input */
+  .subdomain-input-group {
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+  .subdomain-input-group input {
+    border-top-right-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-right: none !important;
+  }
+  .subdomain-suffix {
+    display: inline-flex;
+    align-items: center;
+    height: 38px;
+    padding: 0 12px;
+    background: var(--bg-pill);
+    border: 1px solid var(--border-input);
+    border-radius: 0 8px 8px 0;
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+    font-family: monospace;
+    white-space: nowrap;
+  }
+
   /* Form Panel */
   .auth-form-panel {
-    padding: 24px 28px 22px;
+    padding: 32px 32px 28px;
     display: flex;
     flex-direction: column;
     justify-content: center;
   }
 
   @media (max-width: 640px) {
-    body { padding: 52px 10px 12px; align-items: flex-start; }
+    body { padding: 48px 12px 16px; align-items: flex-start; }
     .auth-top-bar { top: 10px; left: 12px; right: 12px; }
-    .auth-form-panel { padding: 18px 16px 16px; }
+    .auth-form-panel { padding: 24px 20px 20px; }
   }
 
   .auth-header {
-    margin-bottom: 12px;
+    margin-bottom: 20px;
+    text-align: center;
   }
-  .auth-eyebrow {
-    display: inline-flex;
+  .auth-logo-glyph {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto 14px;
+    border-radius: 12px;
+    display: flex;
     align-items: center;
-    gap: 5px;
-    margin-bottom: 5px;
-    padding: 2px 7px;
-    border-radius: 9999px;
-    background: var(--brand-light);
-    color: var(--brand-primary);
-    font-size: 0.65rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-  .auth-eyebrow::before {
-    content: "";
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--success-solid);
-    box-shadow: 0 0 0 2px var(--success-bg);
+    justify-content: center;
+    box-shadow: 0 4px 14px rgba(0, 82, 204, 0.25);
   }
   .auth-header h1 {
-    font-size: 1.1875rem;
+    font-size: 1.5rem;
     font-weight: 700;
     color: var(--text-title);
-    letter-spacing: -0.02em;
-    margin-bottom: 2px;
+    letter-spacing: -0.025em;
+    margin-bottom: 6px;
     line-height: 1.25;
   }
   .auth-header p {
-    font-size: 0.78125rem;
+    font-size: 0.875rem;
     color: var(--text-secondary);
-    line-height: 1.35;
+    line-height: 1.45;
   }
 
   .auth-alternative {
-    margin-top: 10px;
-    padding-top: 8px;
+    margin-top: 18px;
+    padding-top: 14px;
     border-top: 1px solid var(--border-subtle);
     color: var(--text-secondary);
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     text-align: center;
   }
 
   /* Social SSO Grid */
   .social-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
-    gap: 6px;
-    margin-bottom: 8px;
-  }
-  @media (max-width: 340px) {
-    .social-grid { grid-template-columns: 1fr; }
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    margin-top: 4px;
   }
   .social-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    height: 34px;
-    padding: 0 10px;
+    gap: 8px;
+    height: 38px;
+    width: 100%;
+    padding: 0 14px;
     background: var(--bg-btn-sec);
-    border: 1px solid var(--border-btn-sec);
-    border-radius: 6px;
-    color: var(--text-btn-sec);
-    font-size: 0.78125rem;
+    border: 1px solid var(--border-input);
+    border-radius: 8px;
+    color: var(--text-title);
+    font-size: 0.8125rem;
     font-weight: 500;
     text-decoration: none;
     box-shadow: var(--shadow-sm);
     transition: all 0.15s ease;
+    cursor: pointer;
+    box-sizing: border-box;
   }
   .social-btn:hover {
     background: var(--bg-btn-sec-hover);
-    border-color: var(--border-btn-sec-hover);
+    border-color: var(--brand-primary);
     transform: translateY(-1px);
     box-shadow: var(--shadow-md);
   }
   .social-btn svg {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
   }
 
-  /* Separator */
+  /* Strata Divider */
+  .auth-divider-strata {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 18px 0 14px;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+  .auth-divider-strata .divider-line {
+    flex: 1;
+    height: 1px;
+    background: var(--border-card);
+  }
+
   .auth-divider {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin: 8px 0;
+    gap: 14px;
+    margin: 16px 0 12px;
     color: var(--text-muted);
-    font-size: 0.65625rem;
-    font-weight: 600;
+    font-size: 0.75rem;
+    font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.04em;
   }
   .auth-divider::before, .auth-divider::after {
     content: "";
@@ -1955,12 +2043,13 @@ const BASE_STYLES = `
 
   /* Form Elements */
   .form-group {
-    margin-bottom: 9px;
+    margin-bottom: 14px;
+    text-align: left;
   }
   .form-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    gap: 12px;
   }
   @media (max-width: 340px) {
     .form-row { grid-template-columns: 1fr; }
@@ -1969,42 +2058,70 @@ const BASE_STYLES = `
     display: block;
     font-size: 0.75rem;
     font-weight: 600;
-    color: var(--text-secondary);
-    margin-bottom: 3px;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+    text-align: left;
   }
   .input-wrapper {
     position: relative;
     display: flex;
     align-items: center;
+    width: 100%;
   }
   .form-input {
     width: 100%;
-    height: 35px;
-    padding: 0 10px;
-    font-size: 0.8125rem;
+    height: 38px;
+    padding: 0 12px;
+    font-size: 0.875rem;
     background: var(--bg-input);
     border: 1px solid var(--border-input);
-    border-radius: 6px;
+    border-radius: 8px;
     color: var(--text-primary);
     outline: none;
     transition: all 0.15s ease;
+    box-sizing: border-box;
   }
   .form-input:hover {
     border-color: var(--border-input-hover);
     background: var(--bg-input-hover);
   }
   .form-input:focus {
-    border-color: var(--border-input-focus);
+    border-color: var(--brand-primary);
     background: var(--bg-input-focus);
-    box-shadow: 0 0 0 2px var(--brand-ring);
+    box-shadow: 0 0 0 3px var(--brand-ring);
   }
   .form-input::placeholder {
     color: var(--text-placeholder);
-    font-size: 0.78125rem;
+    font-size: 0.8125rem;
+  }
+  .form-input--verified {
+    padding-right: 38px;
+    border-color: var(--brand-primary);
+  }
+  .input-verified-badge {
+    position: absolute;
+    right: 11px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--success-bg);
+    border: 1px solid var(--success-solid);
+    color: var(--success-solid);
+    font-size: 0.75rem;
+    font-weight: 700;
+    pointer-events: none;
+    animation: badgePop 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+  @keyframes badgePop {
+    from { transform: scale(0.6); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
   }
   .input-icon-btn {
     position: absolute;
-    right: 6px;
+    right: 8px;
     background: transparent;
     border: none;
     padding: 4px;
@@ -2025,29 +2142,30 @@ const BASE_STYLES = `
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-top: 2px;
-    margin-bottom: 10px;
-    font-size: 0.75rem;
+    margin-top: 4px;
+    margin-bottom: 16px;
+    font-size: 0.78125rem;
   }
   .checkbox-label {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     color: var(--text-secondary);
     cursor: pointer;
     user-select: none;
-    font-size: 0.75rem;
+    font-size: 0.78125rem;
   }
   .checkbox-label input[type="checkbox"] {
     accent-color: var(--brand-primary);
-    width: 13px;
-    height: 13px;
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
   }
   .auth-link {
     color: var(--brand-primary);
     text-decoration: none;
-    font-weight: 500;
-    font-size: 0.75rem;
+    font-weight: 600;
+    font-size: 0.78125rem;
     transition: color 0.15s ease;
   }
   .auth-link:hover {
@@ -2139,32 +2257,59 @@ const BASE_STYLES = `
     display: none;
   }
 
-  /* Primary Button */
-  .btn-submit {
+  /* Primary Button — Strata DL 3.0 */
+  .btn-submit, .btn-primary-strata {
     width: 100%;
-    height: 36px;
-    background: linear-gradient(135deg, var(--brand-primary) 0%, var(--brand-accent) 100%);
+    height: 40px;
+    background: var(--brand-primary);
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     color: #ffffff;
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
     font-weight: 600;
     letter-spacing: -0.01em;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    box-shadow: var(--shadow-btn);
+    gap: 8px;
+    box-shadow: 0 2px 6px rgba(2, 132, 199, 0.25);
     transition: all 0.15s ease;
   }
-  .btn-submit:hover {
-    filter: brightness(1.05);
+  .btn-submit:hover, .btn-primary-strata:hover {
+    background: var(--brand-primary-hover);
     transform: translateY(-1px);
-    box-shadow: 0 4px 10px rgba(79, 70, 229, 0.28);
+    box-shadow: 0 4px 12px rgba(2, 132, 199, 0.35);
   }
-  .btn-submit:active {
+  .btn-submit:active, .btn-primary-strata:active {
     transform: translateY(0);
+  }
+
+  .btn-secondary-strata {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 38px;
+    width: 100%;
+    padding: 0 14px;
+    background: var(--bg-btn-sec);
+    border: 1px solid var(--border-input);
+    border-radius: 8px;
+    color: var(--text-title);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    text-decoration: none;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.15s ease;
+    cursor: pointer;
+    box-sizing: border-box;
+  }
+  .btn-secondary-strata:hover {
+    background: var(--bg-btn-sec-hover);
+    border-color: var(--brand-primary);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
   }
 
   /* Password Strength Indicator */
@@ -2344,6 +2489,7 @@ function renderDocument(title: string, content: string): string {
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>${escapeHtml(title)} · UniERP</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg width='32' height='32' viewBox='0 0 100 100' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='100' height='100' rx='30' fill='%230052CC'/%3E%3Cpath d='M36 32V58C36 66.284 42.716 73 51 73C59.284 73 66 66.284 66 58V50' stroke='white' stroke-width='15' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='66' cy='33' r='8' fill='%2338BDF8'/%3E%3C/svg%3E"/>
   <style>${BASE_STYLES}</style>
   <script>
     function toggleTheme() {
@@ -2370,9 +2516,10 @@ function renderDocument(title: string, content: string): string {
   <div class="auth-top-bar">
     <a href="${escapeHtml(navigation.wizardUrl)}" class="auth-brand-logo">
       <div class="auth-brand-icon">
-        <svg width="20" height="20" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-          <path d="M4 5.5 16 1l12 4.5v9.7c0 7.2-4.8 12.5-12 15.8C8.8 27.7 4 22.4 4 15.2V5.5Z" fill="currentColor"/>
-          <path d="M10 9v7.2c0 4 2.2 6.1 6 6.1s6-2.1 6-6.1V9h-3.7v7c0 2.1-.7 3.1-2.3 3.1s-2.3-1-2.3-3.1V9H10Z" fill="var(--bg-card)"/>
+        <svg width="28" height="28" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect width="100" height="100" rx="30" fill="#0052CC"/>
+          <path d="M36 32V58C36 66.284 42.716 73 51 73C59.284 73 66 66.284 66 58V50" stroke="white" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="66" cy="33" r="8" fill="#38BDF8"/>
         </svg>
       </div>
       <span>UniERP</span>
@@ -2446,7 +2593,13 @@ function renderProviderButtons(
   returnTo: string,
 ): string {
   if (!providers.length) return "";
-  const returnToEnc = encodeURIComponent(returnTo);
+  const effectiveReturnTo =
+    returnTo && returnTo !== "/"
+      ? returnTo
+      : process.env.TENANT_APP_URL
+        ? `${process.env.TENANT_APP_URL}/apps`
+        : process.env.PLATFORM_WIZARD_URL || "http://localhost:4000";
+  const returnToEnc = encodeURIComponent(effectiveReturnTo);
   return `<div class="social-grid" aria-label="Continue with an existing account">
     ${providers
       .map((provider) => {
@@ -3085,28 +3238,20 @@ function renderLogin(opts: {
       <!-- Form Panel -->
       <div class="auth-form-panel">
         <div class="auth-header">
-          <span class="auth-eyebrow">Secure identity</span>
-          <h1>Sign in to UniERP</h1>
-          <p>Use your work account. We’ll route you to the right workspace.</p>
+          <div class="auth-logo-glyph" aria-hidden="true">
+            <svg width="40" height="40" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <rect width="100" height="100" rx="30" fill="#0052CC" />
+              <path d="M36 32V58C36 66.284 42.716 73 51 73C59.284 73 66 66.284 66 58V50" stroke="#ffffff" stroke-width="15" stroke-linecap="round" stroke-linejoin="round" />
+              <circle cx="66" cy="33" r="8" fill="#38BDF8" />
+            </svg>
+          </div>
+          <span style="display:none" class="auth-eyebrow">Secure identity</span>
+          <h1>Welcome back</h1>
+          <p>Enter your enterprise credentials to sign in to your workspace</p>
         </div>
 
         ${opts.error ? `<div class="alert-banner alert-error"><span>⚠️ ${escapeHtml(opts.error)}</span></div>` : ""}
         ${opts.success ? `<div class="alert-banner alert-success"><span>✓ ${escapeHtml(opts.success)}</span></div>` : ""}
-
-        ${renderProviderButtons(opts.providers || [], "login", opts.returnTo)}
-
-        ${(opts.providers || []).length ? '<div class="auth-divider">or continue with email</div>' : ""}
-
-        <input type="hidden" id="passkey-login-csrf" value="${escapeHtml(opts.csrfToken || "")}"/>
-        <input type="hidden" id="passkey-return-to" value="${escapeHtml(opts.returnTo)}"/>
-        <button type="button" id="passkey-login" class="social-btn" style="width:100%;justify-content:center">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="m21 2-2 2m-1.5 1.5L16 7m-1.5 1.5L13 10m-1.5 1.5L10 13m-2-2a5 5 0 1 0-7 7 5 5 0 0 0 7-7z"></path>
-          </svg>
-          <span>Sign in with a passkey</span>
-        </button>
-        <p id="passkey-login-status" class="account-muted" role="status" aria-live="polite"></p>
-        <div class="auth-divider">or use your password</div>
 
         <form method="POST" action="/oidc/login">
           <input type="hidden" name="_csrf" value="${escapeHtml(opts.csrfToken || "")}"/>
@@ -3114,18 +3259,21 @@ function renderLogin(opts: {
           <input type="text" name="hp_website" class="hp-field" tabindex="-1" autocomplete="off"/>
 
           <div class="form-group">
-            <label class="form-label" for="login-email">Work Email</label>
-            <input 
-              id="login-email" 
-              type="email" 
-              name="email" 
-              required 
-              autofocus 
-              autocomplete="email" 
-              placeholder="name@company.com" 
-              value="${escapeHtml(opts.email || "")}" 
-              class="form-input"
-            />
+            <label class="form-label" for="login-email">Email</label>
+            <div class="input-wrapper">
+              <input 
+                id="login-email" 
+                type="email" 
+                name="email" 
+                required 
+                autofocus 
+                autocomplete="email" 
+                placeholder="name@company.com" 
+                value="${escapeHtml(opts.email || "")}" 
+                class="form-input"
+              />
+              <span id="login-email-badge" class="input-verified-badge" aria-label="Verified enterprise domain" style="display: none;">✓</span>
+            </div>
           </div>
 
           <div class="form-group">
@@ -3147,7 +3295,7 @@ function renderLogin(opts: {
                 aria-label="Show password"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path>
                   <circle cx="12" cy="12" r="3"></circle>
                 </svg>
               </button>
@@ -3167,12 +3315,101 @@ function renderLogin(opts: {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
           </button>
         </form>
-        <p class="auth-alternative">New to UniERP? <a href="/oidc/register?return_to=${returnToEnc}" class="auth-link">Create a free-trial workspace</a></p>
+
+        <div class="auth-divider-strata">
+          <div class="divider-line"></div>
+          <span>or</span>
+          <div class="divider-line"></div>
+        </div>
+
+        <input type="hidden" id="passkey-login-csrf" value="${escapeHtml(opts.csrfToken || "")}"/>
+        <input type="hidden" id="passkey-return-to" value="${escapeHtml(opts.returnTo)}"/>
+        <div class="social-grid">
+          <button type="button" id="passkey-login" class="social-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m21 2-2 2m-1.5 1.5L16 7m-1.5 1.5L13 10m-1.5 1.5L10 13m-2-2a5 5 0 1 0-7 7 5 5 0 0 0 7-7z"></path>
+            </svg>
+            <span>Sign in with a passkey</span>
+          </button>
+          <p id="passkey-login-status" class="account-muted" role="status" aria-live="polite" style="margin: 0; text-align: center;"></p>
+          ${renderProviderButtons(opts.providers || [], "login", opts.returnTo)}
+        </div>
+
+        <p class="auth-alternative">Don’t have an account? <a href="/oidc/register?return_to=${returnToEnc}" class="auth-link">Create a free-trial workspace →</a></p>
         ${renderPasskeyClientScript("login")}
+        ${renderEmailVerificationClientScript()}
       </div>
     </div>
   `;
   return renderDocument("Sign In", content);
+}
+
+function renderEmailVerificationClientScript(): string {
+  return `<script>
+    (function () {
+      var emailInput = document.getElementById('login-email');
+      var badge = document.getElementById('login-email-badge');
+      if (!emailInput || !badge) return;
+
+      var emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_\`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+      var debounceTimer = null;
+
+      function setVerified(isVerified) {
+        if (isVerified) {
+          badge.style.display = 'flex';
+          emailInput.classList.add('form-input--verified');
+        } else {
+          badge.style.display = 'none';
+          emailInput.classList.remove('form-input--verified');
+        }
+      }
+
+      async function checkEmailRealtime() {
+        var val = emailInput.value.trim();
+        if (!val || !emailRegex.test(val)) {
+          setVerified(false);
+          return;
+        }
+        var atIdx = val.indexOf('@');
+        var domain = val.slice(atIdx + 1);
+        if (!domain.includes('.') || domain.split('.').pop().length < 2) {
+          setVerified(false);
+          return;
+        }
+
+        try {
+          var res = await fetch('/api/v1/auth/check-email?email=' + encodeURIComponent(val));
+          if (res.ok) {
+            var data = await res.json();
+            if (data && data.available !== null && data.available !== undefined) {
+              setVerified(true);
+              return;
+            }
+          }
+        } catch (e) {
+          // Graceful fallback on network error
+        }
+        setVerified(true);
+      }
+
+      emailInput.addEventListener('input', function () {
+        var val = emailInput.value.trim();
+        if (!val || !emailRegex.test(val)) {
+          clearTimeout(debounceTimer);
+          setVerified(false);
+          return;
+        }
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(checkEmailRealtime, 250);
+      });
+
+      emailInput.addEventListener('blur', checkEmailRealtime);
+
+      if (emailInput.value.trim()) {
+        checkEmailRealtime();
+      }
+    })();
+  </script>`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -3282,18 +3519,48 @@ function renderRegister(opts: {
       <!-- Form Panel -->
       <div class="auth-form-panel">
         <div class="auth-header">
-          <span class="auth-eyebrow">30-day free trial</span>
+          <div class="auth-logo-glyph" aria-hidden="true">
+            <svg width="40" height="40" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <rect width="100" height="100" rx="30" fill="#0052CC" />
+              <path d="M36 32V58C36 66.284 42.716 73 51 73C59.284 73 66 66.284 66 58V50" stroke="#ffffff" stroke-width="15" stroke-linecap="round" stroke-linejoin="round" />
+              <circle cx="66" cy="33" r="8" fill="#38BDF8" />
+            </svg>
+          </div>
+          <span class="auth-eyebrow">🛡️ UniERP Sovereign Cloud Provisioning</span>
           <h1>Create your UniERP workspace</h1>
-          <p>Set up your secure organization account in less than a minute.</p>
+          <p>Set up your tenant partition with local data residency & dedicated cryptographic boundaries.</p>
         </div>
+
+        <!-- Stepper Progress Bar -->
+        <nav class="reg-stepper" aria-label="Onboarding Progress">
+          <div class="reg-step-item">
+            <div class="reg-step-circle reg-step-circle-active">1</div>
+            <span class="reg-step-label reg-step-label-active">Account</span>
+          </div>
+          <div class="reg-step-line"></div>
+          <div class="reg-step-item">
+            <div class="reg-step-circle">2</div>
+            <span class="reg-step-label">Verify</span>
+          </div>
+          <div class="reg-step-line"></div>
+          <div class="reg-step-item">
+            <div class="reg-step-circle">3</div>
+            <span class="reg-step-label">Provision</span>
+          </div>
+          <div class="reg-step-line"></div>
+          <div class="reg-step-item">
+            <div class="reg-step-circle">4</div>
+            <span class="reg-step-label">Launch</span>
+          </div>
+        </nav>
 
         ${opts.error ? `<div class="alert-banner alert-error"><span>⚠️ ${escapeHtml(opts.error)}</span></div>` : ""}
 
         ${opts.externalAuth ? `<div class="alert-banner alert-success"><span>✓ ${escapeHtml(providerLabel(opts.externalProvider))} account verified. Complete your organization details.</span></div>` : renderProviderButtons(opts.providers || [], "register", opts.returnTo)}
 
-        ${!opts.externalAuth && (opts.providers || []).length ? '<div class="auth-divider">or continue with email</div>' : ""}
+        ${!opts.externalAuth && (opts.providers || []).length ? '<div class="auth-divider-strata"><div class="divider-line"></div><span>or continue with email</span><div class="divider-line"></div></div>' : ""}
 
-        <form method="POST" action="/oidc/register">
+        <form method="POST" action="/oidc/register" id="register-form">
           <input type="hidden" name="_csrf" value="${escapeHtml(opts.csrfToken || "")}"/>
           <input type="hidden" name="return_to" value="${escapeHtml(opts.returnTo)}"/>
           <input type="hidden" name="external_auth" value="${escapeHtml(opts.externalAuth || "")}"/>
@@ -3301,28 +3568,31 @@ function renderRegister(opts: {
 
           <div class="form-grid--two-col">
             <div class="form-group">
-              <label class="form-label" for="reg-org">Organization Name</label>
+              <label class="form-label" for="reg-email">Work Email Address</label>
+              <input 
+                id="reg-email" 
+                type="email" 
+                name="email" 
+                required 
+                autocomplete="email" 
+                placeholder="alex.chen@enterprise.com" 
+                value="${escapeHtml(v.email || "")}" 
+                class="form-input"
+                ${opts.externalAuth ? "readonly" : ""}
+              />
+              <span style="font-size: 0.6875rem; color: var(--text-muted); margin-top: 4px; display: block;">Use your official corporate domain</span>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="reg-org">Organization Legal Name</label>
               <input 
                 id="reg-org" 
                 type="text" 
                 name="organization_name" 
                 autocomplete="organization"
                 required 
-                placeholder="Acme Global Inc." 
+                placeholder="Acme Global Technologies Inc." 
                 value="${escapeHtml(v.organization_name || "")}" 
-                class="form-input"
-              />
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="reg-slug">Workspace Domain Slug</label>
-              <input 
-                id="reg-slug" 
-                type="text" 
-                name="workspace_slug" 
-                autocomplete="off"
-                placeholder="acme-global" 
-                value="${escapeHtml(v.workspace_slug || "")}" 
                 class="form-input"
               />
             </div>
@@ -3335,7 +3605,7 @@ function renderRegister(opts: {
                 name="first_name" 
                 autocomplete="given-name"
                 required 
-                placeholder="Jane" 
+                placeholder="Alex" 
                 value="${escapeHtml(v.first_name || "")}" 
                 class="form-input"
               />
@@ -3349,25 +3619,27 @@ function renderRegister(opts: {
                 name="last_name" 
                 autocomplete="family-name"
                 required 
-                placeholder="Doe" 
+                placeholder="Chen" 
                 value="${escapeHtml(v.last_name || "")}" 
                 class="form-input"
               />
             </div>
 
             <div class="form-group">
-              <label class="form-label" for="reg-email">Corporate Work Email</label>
-              <input 
-                id="reg-email" 
-                type="email" 
-                name="email" 
-                required 
-                autocomplete="email" 
-                placeholder="jane@acme.com" 
-                value="${escapeHtml(v.email || "")}" 
-                class="form-input"
-                ${opts.externalAuth ? "readonly" : ""}
-              />
+              <label class="form-label" for="reg-slug">Workspace Domain Slug</label>
+              <div class="subdomain-input-group">
+                <input 
+                  id="reg-slug" 
+                  type="text" 
+                  name="workspace_slug" 
+                  autocomplete="off"
+                  placeholder="acme" 
+                  value="${escapeHtml(v.workspace_slug || "")}" 
+                  class="form-input"
+                  style="font-family: monospace;"
+                />
+                <span class="subdomain-suffix">.unierp.cloud</span>
+              </div>
             </div>
 
             <div class="form-group">
@@ -3385,7 +3657,7 @@ function renderRegister(opts: {
 
             ${!opts.externalAuth ? `
             <div class="form-group">
-              <label class="form-label" for="reg-password">Password</label>
+              <label class="form-label" for="reg-password">Root Admin Password</label>
               <div class="input-wrapper">
                 <input 
                   id="reg-password" 
@@ -3404,7 +3676,7 @@ function renderRegister(opts: {
                   aria-label="Show password"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path>
                     <circle cx="12" cy="12" r="3"></circle>
                   </svg>
                 </button>
@@ -3440,7 +3712,7 @@ function renderRegister(opts: {
                   aria-label="Show confirm password"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path>
                     <circle cx="12" cy="12" r="3"></circle>
                   </svg>
                 </button>
@@ -3449,7 +3721,7 @@ function renderRegister(opts: {
             ` : ""}
           </div>
 
-          <div class="form-group" style="margin-bottom: 8px;">
+          <div class="form-group" style="margin-bottom: 12px; margin-top: 4px;">
             <label class="checkbox-label" style="font-size: 0.75rem; line-height: 1.35;">
               <input type="checkbox" name="terms_accepted" required />
               <span>I agree to the <a href="${escapeHtml(legal.terms.url)}" target="_blank" rel="noopener noreferrer" class="auth-link" aria-label="Terms of Service, version ${escapeHtml(legal.terms.version)} (opens in a new tab)">Terms of Service</a> and acknowledge the <a href="${escapeHtml(legal.privacy.url)}" target="_blank" rel="noopener noreferrer" class="auth-link" aria-label="Privacy Policy, version ${escapeHtml(legal.privacy.version)} (opens in a new tab)">Privacy Policy</a>.</span>
@@ -3467,32 +3739,23 @@ function renderRegister(opts: {
     </div>
 
     <script>
-      function checkPasswordStrength(p) {
-        let score = 0;
-        if (p.length >= 8) score++;
-        if (p.length >= 12) score++;
-        if (/[A-Z]/.test(p) && /[0-9]/.test(p)) score++;
-        if (/[^A-Za-z0-9]/.test(p)) score++;
-
-        const colors = ['#f43f5e', '#f59e0b', '#0ea5e9', '#10b981'];
-        const labels = ['Weak', 'Fair', 'Good', 'Strong'];
-        const activeColor = colors[score - 1] || '#e2e8f0';
-
-        for (let i = 1; i <= 4; i++) {
-          const bar = document.getElementById('bar-' + i);
-          if (bar) {
-            bar.style.background = i <= score ? activeColor : 'var(--border-card)';
-          }
+      (function() {
+        var orgInput = document.getElementById('reg-org');
+        var slugInput = document.getElementById('reg-slug');
+        if (orgInput && slugInput) {
+          orgInput.addEventListener('input', function() {
+            if (!slugInput.dataset.manual) {
+              slugInput.value = orgInput.value.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 32);
+            }
+          });
+          slugInput.addEventListener('input', function() {
+            slugInput.dataset.manual = 'true';
+          });
         }
-        const text = document.getElementById('strength-text');
-        if (text) {
-          text.textContent = score > 0 ? 'Password strength: ' + labels[score - 1] : 'Password strength: requires 8+ chars';
-          text.style.color = score > 0 ? activeColor : 'var(--text-muted)';
-        }
-      }
+      })();
     </script>
   `;
-  return renderDocument("Create Organization", content);
+  return renderDocument("Create your UniERP workspace", content);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

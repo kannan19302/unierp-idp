@@ -723,20 +723,30 @@ function stringClaim(value: unknown): string | undefined {
 }
 
 function safeReturnTo(raw?: string): string {
-  if (!raw) return "/";
-  if (raw.startsWith("/") && !raw.startsWith("//")) return raw;
+  const defaultTarget =
+    process.env.TENANT_APP_URL
+      ? `${process.env.TENANT_APP_URL}/apps`
+      : process.env.PLATFORM_WIZARD_URL || "http://localhost:4000";
+
+  if (!raw || raw === "/" || raw === "") return defaultTarget;
+  if (raw.startsWith("/oidc/")) return raw;
+  if (raw.startsWith("/") && !raw.startsWith("//")) {
+    const tenantAppUrl = process.env.TENANT_APP_URL || "http://localhost:4003";
+    return `${tenantAppUrl.replace(/\/$/, "")}${raw}`;
+  }
   try {
     const url = new URL(raw);
     if (
       url.hostname === "localhost" ||
       url.hostname === "127.0.0.1" ||
       url.hostname.endsWith(".uni-erp.com") ||
-      url.hostname.endsWith(".unierp.internal")
+      url.hostname.endsWith(".unierp.internal") ||
+      url.hostname.endsWith(".unierp.cloud")
     ) {
       return url.toString();
     }
   } catch {
     // Fall through to the safe root.
   }
-  return "/";
+  return defaultTarget;
 }

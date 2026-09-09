@@ -154,20 +154,31 @@ export class OAuthController {
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
         path: "/",
-        maxAge: 24 * 60 * 60 * 1000,
+        maxAge: 7 * 24 * 60 * 60 * 1000,
       });
       res.cookie(REFRESH_COOKIE, String(result.refreshToken || ""), {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
-        path: REFRESH_COOKIE_PATH,
+        path: "/",
         expires: result.refreshExpiresAt as Date,
       });
 
-      if (result.returnTo) {
-        return res.redirect(result.returnTo);
+      const defaultDestination =
+        process.env.TENANT_APP_URL
+          ? `${process.env.TENANT_APP_URL}/apps`
+          : process.env.PLATFORM_WIZARD_URL || "http://localhost:4000";
+
+      if (result.returnTo && result.returnTo !== "/" && result.returnTo !== "") {
+        if (
+          result.returnTo.startsWith("http://") ||
+          result.returnTo.startsWith("https://") ||
+          result.returnTo.startsWith("/oidc/")
+        ) {
+          return res.redirect(result.returnTo);
+        }
       }
-      return res.redirect(`${appUrl()}/oauth/complete`);
+      return res.redirect(defaultDestination);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Sign-in could not be completed.";
