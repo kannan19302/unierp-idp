@@ -72,7 +72,19 @@ export class SigningKeyService implements OnModuleInit {
     const existing = await idpPrisma.oidcSigningKey.findFirst({
       where: { status: KEY_STATUS.CURRENT },
     });
-    if (existing) return this.toActiveKey(existing);
+    if (existing) {
+      try {
+        return this.toActiveKey(existing);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to decrypt current OIDC signing key ${existing.id}: ${err instanceof Error ? err.message : String(err)}. Demoting unreadable key and generating a new one.`,
+        );
+        await idpPrisma.oidcSigningKey.update({
+          where: { id: existing.id },
+          data: { status: KEY_STATUS.RETIRED },
+        });
+      }
+    }
 
     try {
       const created = await this.generateAndStore(KEY_STATUS.CURRENT);
