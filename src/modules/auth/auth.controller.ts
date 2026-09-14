@@ -310,9 +310,8 @@ export class AuthController {
   }
 
   @ApiOperation({ summary: "List tenants this account can sign in to" })
-  @Permissions("auth.read")
   @Get("tenants")
-  @UseGuards(JwtAuthGuard, RbacGuard)
+  @UseGuards(JwtAuthGuard)
   async listTenants(@Req() req: AuthenticatedRequest) {
     return this.authService.listUserTenants(req.user.userId);
   }
