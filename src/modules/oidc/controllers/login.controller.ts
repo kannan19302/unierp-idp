@@ -2628,8 +2628,18 @@ function resolvePlatformBackNavigation(
     const port = url.port;
     const path = url.pathname;
 
-    // Port 4003 - Tenant Applications
-    if (port === "4003") {
+    // Port 4000 - Unified Master Landing Page & Platform Gateway (marketing-site)
+    if (port === "4000") {
+      return { label: "← Back to Home", url: `${url.origin}/` };
+    }
+
+    // Port 4001 - Provider Admin OS / Cloud Operator Control Plane
+    if (port === "4001") {
+      return { label: "← Back to Provider Admin OS", url: `${url.origin}/` };
+    }
+
+    // Port 4002 - Tenant Applications / Flagship ERP Suite
+    if (port === "4002") {
       if (path.startsWith("/apps") || path === "/" || path === "") {
         return { label: "← Back to app list", url: `${url.origin}/apps` };
       }
@@ -2639,44 +2649,29 @@ function resolvePlatformBackNavigation(
       return { label: "← Back to Tenant Applications", url: `${url.origin}/apps` };
     }
 
-    // Port 4000 - Platform Wizard
-    if (port === "4000") {
-      return { label: "← Back to Platform Wizard", url: `${url.origin}/` };
-    }
-
-    // Port 4001 - Marketing Site
-    if (port === "4001") {
-      return { label: "← Back to Marketing Site", url: `${url.origin}/` };
-    }
-
-    // Port 4002 - Provider Admin OS / Console
-    if (port === "4002") {
-      return { label: "← Back to Provider Admin OS", url: `${url.origin}/` };
-    }
-
-    // Port 4004 - Tenant Websites
-    if (port === "4004") {
-      return { label: "← Back to Tenant Website", url: `${url.origin}/` };
-    }
-
-    // Port 4005 - Web Studio
-    if (port === "4005") {
-      return { label: "← Back to Web Studio", url: `${url.origin}/` };
-    }
-
-    // Port 4006 - Tenant Admin OS / OCC
-    if (port === "4006") {
+    // Port 4003 - Tenant Admin Console (OCC)
+    if (port === "4003") {
       return { label: "← Back to Tenant Admin", url: `${url.origin}/` };
     }
 
-    // Port 4007 - Marketplace
-    if (port === "4007") {
+    // Port 4004 - Developer Platform / Visual App Studio & Dev Console
+    if (port === "4004") {
+      return { label: "← Back to Developer Platform", url: `${url.origin}/` };
+    }
+
+    // Port 4005 - Extension & Solution Marketplace
+    if (port === "4005") {
       return { label: "← Back to Marketplace", url: `${url.origin}/` };
     }
 
-    // Port 4008 - Developer Platform
-    if (port === "4008") {
-      return { label: "← Back to Developer Platform", url: `${url.origin}/` };
+    // Port 4006 - Mobile Web Client Preview (Flutter Web)
+    if (port === "4006") {
+      return { label: "← Back to Mobile Web App", url: `${url.origin}/` };
+    }
+
+    // Port 4007 - Desktop Web Client Shell (Tauri)
+    if (port === "4007") {
+      return { label: "← Back to Desktop Web Shell", url: `${url.origin}/` };
     }
 
     // Generic URL fallback
