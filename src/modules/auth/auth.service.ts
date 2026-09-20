@@ -9,6 +9,13 @@ import {
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { IDENTITY_EMAIL_QUEUE } from "../../common/queues/queue.constants";
+import {
+  renderVerificationEmail,
+  renderWelcomeEmail,
+  renderPasswordResetEmail,
+  renderLoginAlertEmail,
+  renderOtpEmail,
+} from "../../common/email-templates";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { randomBytes, createHash, randomUUID, randomInt } from "node:crypto";
 import * as webPush from "web-push";
@@ -268,6 +275,33 @@ export class AuthService {
     body: string;
   }): Promise<void> {
     await this.dispatchAuthEmail(payload);
+  }
+
+  /**
+   * Dispatches the branded welcome email upon a user's first successful login.
+   */
+  async dispatchWelcomeEmail(payload: {
+    userId: string;
+    email: string;
+    firstName?: string;
+    tenantId: string;
+    organizationName?: string;
+  }): Promise<void> {
+    const workspaceUrl = process.env.BUSINESS_SUITE_URL || process.env.APP_URL || "http://localhost:3000";
+    const rendered = renderWelcomeEmail({
+      firstName: payload.firstName,
+      organizationName: payload.organizationName,
+      workspaceUrl,
+      setupUrl: `${workspaceUrl}/setup`,
+    });
+
+    await this.dispatchAuthEmail({
+      to: payload.email,
+      tenantId: payload.tenantId,
+      subject: rendered.subject,
+      body: rendered.html,
+    });
+    this.logger.log(`[email] Welcome email dispatched to ${payload.email} for workspace ${payload.organizationName || payload.tenantId}`);
   }
 
   /**
@@ -669,11 +703,17 @@ export class AuthService {
         ? `${this.appUrl}/verify-email?token=${result.verificationToken}`
         : undefined;
       if (verificationLink) {
+        const rendered = renderVerificationEmail({
+          firstName: result.user.firstName || undefined,
+          email: result.user.email,
+          verificationLink,
+          expiresInHours: 24,
+        });
         await this.dispatchAuthEmail({
           to: result.user.email,
           tenantId: result.tenant.id,
-          subject: "Verify your UniERP email address",
-          body: `Welcome to UniERP! Verify your email address to secure your new workspace: ${verificationLink}`,
+          subject: rendered.subject,
+          body: rendered.html,
         });
       }
 
@@ -848,11 +888,15 @@ export class AuthService {
     );
 
     if (link) {
+      const rendered = renderVerificationEmail({
+        verificationLink: link,
+        expiresInHours: 24,
+      });
       await this.dispatchAuthEmail({
         to: dto.email.toLowerCase(),
         tenantId: match.tenant_id,
-        subject: "Verify your UniERP email address",
-        body: `Verify your email address: ${link}`,
+        subject: rendered.subject,
+        body: rendered.html,
       });
       if (!this.isProduction) {
         return { message: genericMessage, developerVerificationLink: link };
@@ -996,11 +1040,18 @@ export class AuthService {
           if (isNewDeviceOrLocation && user.email) {
             const loc = context?.ipAddress ? getGeoHint(context.ipAddress) : "Unknown Location";
             const dev = [parsedUa.browser, parsedUa.device].filter(Boolean).join(" on ") || "New device";
+            const rendered = renderLoginAlertEmail({
+              firstName: user.firstName || undefined,
+              device: dev,
+              location: loc,
+              ipAddress: context?.ipAddress || "Unknown",
+              timestamp: new Date().toUTCString(),
+            });
             this.dispatchAuthEmail({
               to: user.email,
               tenantId: user.tenantId,
-              subject: "Security Alert: New sign-in to your UniERP account",
-              body: `A new sign-in was detected for your account from ${dev} (${loc}, IP: ${context?.ipAddress || "unknown"}). If this was not you, please secure your account immediately by resetting your password.`,
+              subject: rendered.subject,
+              body: rendered.html,
             });
           }
         }
@@ -1040,6 +1091,8 @@ export class AuthService {
           ACCESS_TOKEN_TTL,
         );
 
+        const isFirstLogin = !user.lastLoginAt;
+
         await idpPrisma.user.update({
           where: { id: user.id },
           data: {
@@ -1048,6 +1101,19 @@ export class AuthService {
             lockedUntil: null,
           },
         });
+
+        // Trigger welcome email upon first successful login (option c)
+        if (isFirstLogin && user.email) {
+          this.dispatchWelcomeEmail({
+            userId: user.id,
+            email: user.email,
+            firstName: user.firstName || undefined,
+            tenantId: user.tenantId,
+            organizationName: user.tenant?.name ?? undefined,
+          }).catch((err) => {
+            this.logger.warn(`[email] Failed to dispatch welcome email: ${err instanceof Error ? err.message : err}`);
+          });
+        }
 
         // Office and campus networks put many legitimate users behind one
         // address; without this their combined typos would eventually lock the
@@ -1060,6 +1126,7 @@ export class AuthService {
           // stripped from the JSON body before it reaches the client.
           refreshToken,
           refreshExpiresAt,
+          isFirstLogin,
           user: {
             id: user.id,
             email: user.email,
@@ -1812,7 +1879,7 @@ export class AuthService {
    * Issues a single-use, hashed password reset token. Always responds the same
    * way whether or not the email exists, to avoid account enumeration.
    */
-  async forgotPassword(dto: ForgotPasswordInput) {
+  async forgotPassword(dto: ForgotPasswordInput, context?: SessionContext) {
     const genericMessage =
       "If an account exists for that email, a password reset link has been sent.";
 
@@ -1850,12 +1917,17 @@ export class AuthService {
     );
 
     const resetLink = `${this.appUrl}/reset-password?token=${plain}`;
+    const rendered = renderPasswordResetEmail({
+      resetLink,
+      expiresInMinutes: 15,
+      ipAddress: context?.ipAddress,
+    });
 
     await this.dispatchAuthEmail({
       to: dto.email.toLowerCase(),
       tenantId: match.tenant_id,
-      subject: "Reset your UniERP password",
-      body: `A password reset was requested for your account. Reset it here: ${resetLink}\nIf you didn't request this, you can ignore this email.`,
+      subject: rendered.subject,
+      body: rendered.html,
     });
 
     await emitAuthAudit({
@@ -2268,15 +2340,17 @@ export class AuthService {
     const code = this.generateOtp();
     await this.otpStore?.issue(normalized, code);
 
+    const rendered = renderOtpEmail({
+      code,
+      expiresInMinutes: 5,
+      recipientEmail: normalized,
+    });
+
     await this.dispatchAuthEmail({
       to: normalized,
       tenantId: "",
-      subject: "Your UniERP verification code",
-      body: `Your verification code is: ${code}
-
-This code expires in 5 minutes.
-
-If you did not request this, please ignore this email.`,
+      subject: rendered.subject,
+      body: rendered.html,
     });
 
     // The code itself is NOT logged. It was, and anyone with read access to the

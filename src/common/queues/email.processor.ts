@@ -19,7 +19,7 @@ export interface EmailJobData {
   isCanary?: boolean;
 }
 
-type DeliveryProvider = "resend" | "brevo" | "smtp";
+type DeliveryProvider = "resend" | "brevo" | "sendgrid" | "postmark" | "smtp";
 
 interface ProviderConfig {
   provider: DeliveryProvider;
@@ -115,23 +115,37 @@ export class EmailProcessor extends WorkerHost {
       this.platformCredentialsService
         ? this.platformCredentialsService.get(provider)
         : {};
-    const [resend, brevo, smtp] = await Promise.all([
+    const [emailConfig, resend, brevo, sendgrid, postmark, smtp] = await Promise.all([
+      credentials("email-config"),
       credentials("resend"),
       credentials("brevo"),
+      credentials("sendgrid"),
+      credentials("postmark"),
       credentials("smtp"),
     ]);
 
+    const globalFrom = emailConfig["defaultFrom"] || process.env.EMAIL_FROM || "";
+
     const candidates: ProviderConfig[] = [];
     const resendKey = resend["apiKey"] || process.env.RESEND_API_KEY;
-    if (resendKey) candidates.push({ provider: "resend", values: { ...resend, apiKey: resendKey } });
+    if (resendKey) candidates.push({ provider: "resend", values: { ...resend, from: resend["from"] || globalFrom, apiKey: resendKey } });
+    
     const brevoKey = brevo["apiKey"] || process.env.BREVO_API_KEY;
-    if (brevoKey) candidates.push({ provider: "brevo", values: { ...brevo, apiKey: brevoKey } });
+    if (brevoKey) candidates.push({ provider: "brevo", values: { ...brevo, from: brevo["from"] || globalFrom, apiKey: brevoKey } });
+    
+    const sendgridKey = sendgrid["apiKey"] || process.env.SENDGRID_API_KEY;
+    if (sendgridKey) candidates.push({ provider: "sendgrid", values: { ...sendgrid, from: sendgrid["from"] || globalFrom, apiKey: sendgridKey } });
+    
+    const postmarkToken = postmark["serverToken"] || process.env.POSTMARK_SERVER_TOKEN;
+    if (postmarkToken) candidates.push({ provider: "postmark", values: { ...postmark, from: postmark["from"] || globalFrom, serverToken: postmarkToken } });
+
     const smtpValues = {
       ...smtp,
       host: smtp["host"] || process.env.SMTP_HOST || "",
       user: smtp["user"] || process.env.SMTP_USER || "",
       password: smtp["password"] || process.env.SMTP_PASSWORD || "",
       port: smtp["port"] || process.env.SMTP_PORT || "587",
+      from: smtp["from"] || globalFrom || smtp["user"] || "",
     };
     const smtpAuthConfigured = Boolean(smtpValues.user && smtpValues.password);
     const localUnauthenticatedSmtp =
@@ -140,7 +154,7 @@ export class EmailProcessor extends WorkerHost {
       candidates.push({ provider: "smtp", values: smtpValues });
     }
 
-    const preferred = process.env.EMAIL_PROVIDER?.toLowerCase();
+    const preferred = (emailConfig["preferredProvider"] || process.env.EMAIL_PROVIDER || "auto").toLowerCase();
     if (preferred && preferred !== "auto") {
       candidates.sort((left, right) =>
         left.provider === preferred ? -1 : right.provider === preferred ? 1 : 0,
@@ -152,6 +166,8 @@ export class EmailProcessor extends WorkerHost {
   private async deliver(config: ProviderConfig, job: Job<EmailJobData>): Promise<string> {
     if (config.provider === "resend") return this.sendWithResend(config.values, job);
     if (config.provider === "brevo") return this.sendWithBrevo(config.values, job);
+    if (config.provider === "sendgrid") return this.sendWithSendGrid(config.values, job);
+    if (config.provider === "postmark") return this.sendWithPostmark(config.values, job);
     return this.sendWithSmtp(config.values, job);
   }
 
@@ -196,6 +212,53 @@ export class EmailProcessor extends WorkerHost {
     const result = await response.json().catch(() => ({})) as { messageId?: string; message?: string };
     if (!response.ok) throw new Error(`${response.status} ${result.message || response.statusText}`);
     return result.messageId || `brevo-${job.id}`;
+  }
+
+  private async sendWithSendGrid(values: Record<string, string>, job: Job<EmailJobData>): Promise<string> {
+    const fromAddr = sender(values.from);
+    const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${values["apiKey"] ?? ""}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: job.data.to }] }],
+        from: { email: fromAddr },
+        subject: job.data.subject,
+        content: [{ type: "text/html", value: job.data.body }],
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      throw new Error(`SendGrid failed (${response.status}): ${errText}`);
+    }
+    const messageId = response.headers.get("x-message-id") || `sendgrid-${job.id}`;
+    return messageId;
+  }
+
+  private async sendWithPostmark(values: Record<string, string>, job: Job<EmailJobData>): Promise<string> {
+    const response = await fetch("https://api.postmarkapp.com/email", {
+      method: "POST",
+      headers: {
+        "X-Postmark-Server-Token": values["serverToken"] ?? "",
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        From: sender(values.from),
+        To: job.data.to,
+        Subject: job.data.subject,
+        HtmlBody: job.data.body,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const result = (await response.json().catch(() => ({}))) as { MessageID?: string; Message?: string };
+    if (!response.ok) {
+      throw new Error(`Postmark failed (${response.status}): ${result.Message || response.statusText}`);
+    }
+    return result.MessageID || `postmark-${job.id}`;
   }
 
   private async sendWithSmtp(values: Record<string, string>, job: Job<EmailJobData>): Promise<string> {

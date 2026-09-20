@@ -119,6 +119,29 @@ export const PLATFORM_CREDENTIAL_PROVIDERS: CredentialProviderSpec[] = [
     ],
   },
   {
+    provider: "email-config",
+    label: "Global Email Configuration",
+    fields: [
+      {
+        key: "preferredProvider",
+        label: "Active Email Provider (resend / brevo / smtp / sendgrid / postmark / auto)",
+        sensitive: false,
+        envFallback: "EMAIL_PROVIDER",
+      },
+      {
+        key: "defaultFrom",
+        label: "Default From Address",
+        sensitive: false,
+        envFallback: "EMAIL_FROM",
+      },
+      {
+        key: "replyTo",
+        label: "Default Reply-To Address",
+        sensitive: false,
+      },
+    ],
+  },
+  {
     provider: "resend",
     label: "Resend Email API",
     fields: [
@@ -155,8 +178,44 @@ export const PLATFORM_CREDENTIAL_PROVIDERS: CredentialProviderSpec[] = [
     ],
   },
   {
+    provider: "sendgrid",
+    label: "SendGrid Email API",
+    fields: [
+      {
+        key: "apiKey",
+        label: "API Key",
+        sensitive: true,
+        envFallback: "SENDGRID_API_KEY",
+      },
+      {
+        key: "from",
+        label: "Verified From Address",
+        sensitive: false,
+        envFallback: "EMAIL_FROM",
+      },
+    ],
+  },
+  {
+    provider: "postmark",
+    label: "Postmark Email API",
+    fields: [
+      {
+        key: "serverToken",
+        label: "Server API Token",
+        sensitive: true,
+        envFallback: "POSTMARK_SERVER_TOKEN",
+      },
+      {
+        key: "from",
+        label: "Sender Signature / From Address",
+        sensitive: false,
+        envFallback: "EMAIL_FROM",
+      },
+    ],
+  },
+  {
     provider: "smtp",
-    label: "SMTP / Email",
+    label: "SMTP / Custom Mail Server",
     fields: [
       {
         key: "host",

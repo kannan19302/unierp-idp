@@ -2,7 +2,7 @@ import { createHmac, randomUUID } from "crypto";
 import { Injectable } from "@nestjs/common";
 import { idpPrisma, runWithTenantSession } from "@kannan19302/database";
 
-export type EmailProvider = "resend" | "brevo" | "smtp";
+export type EmailProvider = "resend" | "brevo" | "smtp" | "sendgrid" | "postmark";
 export type EmailReservation = "ALLOWED" | "SUPPRESSED" | "QUOTA";
 
 export interface DeliveryEventInput {

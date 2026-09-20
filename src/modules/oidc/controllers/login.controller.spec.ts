@@ -192,6 +192,7 @@ describe("hosted identity provider buttons", () => {
         email: "owner@example.com",
         password: "secret",
         rememberMe: false,
+        tenantSlug: "another-organization",
       },
       expect.any(Object),
     );

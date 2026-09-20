@@ -503,7 +503,13 @@ export class LoginController {
       }
 
       this.setAuthCookies(res, result);
-      res.redirect(302, returnTo);
+      let targetUrl = returnTo;
+      if (result.isFirstLogin && !targetUrl.includes("welcome=")) {
+        targetUrl = targetUrl.includes("?")
+          ? `${targetUrl}&welcome=true`
+          : `${targetUrl}?welcome=true`;
+      }
+      res.redirect(302, targetUrl);
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Invalid credentials";
@@ -727,7 +733,9 @@ export class LoginController {
       )) as Record<string, unknown>;
 
       this.setAuthCookies(res, result);
-      res.redirect(302, returnTo);
+      const emailParam = encodeURIComponent(body.email ?? "");
+      const returnParam = encodeURIComponent(returnTo);
+      res.redirect(302, `/oidc/register/success?email=${emailParam}&return_to=${returnParam}`);
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Registration failed.";
@@ -742,6 +750,20 @@ export class LoginController {
         }),
       );
     }
+  }
+
+  @Get("register/success")
+  @Public("Registration confirmation page showing check-your-email message")
+  @Header("Cache-Control", "no-store")
+  registerSuccessPage(
+    @Query("email") email?: string,
+    @Query("return_to") returnTo?: string,
+  ): string {
+    const safeReturn = safeReturnTo(returnTo);
+    return renderRegisterSuccess({
+      email: email || "",
+      returnTo: safeReturn,
+    });
   }
 
   // ── 4. FORGOT PASSWORD & RECOVERY ────────────────────────────────────────
@@ -3992,3 +4014,53 @@ function renderVerifyEmail(opts: {
   `;
   return renderDocument("Verify Email", content);
 }
+
+function renderRegisterSuccess(opts: {
+  email: string;
+  returnTo: string;
+}): string {
+  const destination = opts.returnTo.includes("welcome=")
+    ? opts.returnTo
+    : opts.returnTo.includes("?")
+      ? `${opts.returnTo}&welcome=true`
+      : `${opts.returnTo}?welcome=true`;
+
+  const content = `
+    <div class="auth-container" style="max-width: 520px; grid-template-columns: 1fr;">
+      <div class="auth-form-panel" style="text-align: center; padding: 40px 32px;">
+        <div style="width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+            <polyline points="22,6 12,13 2,6"></polyline>
+          </svg>
+        </div>
+
+        <h1 style="font-size: 1.6rem; font-weight: 700; margin: 0 0 12px 0; color: var(--text-primary);">Check your inbox</h1>
+        
+        <p style="color: var(--text-secondary); font-size: 0.95rem; line-height: 1.6; margin: 0 0 20px 0;">
+          We sent a verification link to<br>
+          <strong style="color: var(--text-primary); font-size: 1rem;">${escapeHtml(opts.email || "your email address")}</strong>
+        </p>
+
+        <div style="background-color: var(--bg-hero, #f8fafc); border: 1px solid var(--border-card, #e2e8f0); border-radius: 8px; padding: 14px 18px; margin-bottom: 24px; text-align: left; font-size: 0.85rem; color: var(--text-muted, #64748b);">
+          <div style="display: flex; gap: 10px; align-items: flex-start;">
+            <span style="font-size: 1.1rem; line-height: 1;">💡</span>
+            <span>Click the link in the email to verify your address. You can also explore your workspace right away while verification is pending.</span>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <a href="${escapeHtml(destination)}" class="btn-submit" style="text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px;">
+            <span>Continue to Workspace</span>
+            <span>&rarr;</span>
+          </a>
+          <a href="/oidc/verify-email?return_to=${encodeURIComponent(opts.returnTo)}" class="auth-link" style="font-size: 0.82rem; margin-top: 6px;">
+            Didn't get the email? Request another link
+          </a>
+        </div>
+      </div>
+    </div>
+  `;
+  return renderDocument("Registration Successful", content);
+}
+
