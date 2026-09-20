@@ -1237,13 +1237,19 @@ export class AuthService {
       if (users.length === 0) {
         throw new UnauthorizedException("Invalid credentials");
       }
-      if (users.length > 1) {
+
+      // Filter out provider realm (tnt-provider) if customer tenant memberships exist.
+      // Provider authority and customer tenant authority never cross implicitly.
+      const customerUsers = users.filter((u) => u.tenant_id !== "tnt-provider");
+      const candidateUsers = customerUsers.length > 0 ? customerUsers : users;
+
+      if (candidateUsers.length > 1) {
         throw new BadRequestException(
           "Multiple organizations use this email. Please provide your Organization Slug.",
         );
       }
 
-      const targetUser = users[0];
+      const targetUser = candidateUsers[0];
       if (targetUser) {
         tenantId = targetUser.tenant_id;
       }

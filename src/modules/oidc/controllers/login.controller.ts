@@ -477,6 +477,12 @@ export class LoginController {
               email: body.email,
               password: body.password,
               rememberMe: body.remember === "on",
+              tenantSlug:
+                body.tenant_slug ||
+                body.organization_slug ||
+                body.tenantSlug ||
+                body.slug ||
+                undefined,
             } as never,
             {
               ipAddress: req.ip || req.socket.remoteAddress,
@@ -506,6 +512,10 @@ export class LoginController {
           returnTo,
           error: message,
           email: body.email,
+          tenantSlug: body.tenant_slug || body.organization_slug || "",
+          showOrgSlug:
+            message.toLowerCase().includes("organization slug") ||
+            Boolean(body.tenant_slug || body.organization_slug),
           csrfToken,
           providers,
         }),
@@ -3224,6 +3234,8 @@ function renderLogin(opts: {
   error?: string;
   success?: string;
   email?: string;
+  tenantSlug?: string;
+  showOrgSlug?: boolean;
   csrfToken?: string;
   providers?: OAuthProviderName[];
 }): string {
@@ -3270,6 +3282,28 @@ function renderLogin(opts: {
               <span id="login-email-badge" class="input-verified-badge" aria-label="Verified enterprise domain" style="display: none;">✓</span>
             </div>
           </div>
+
+          ${
+            opts.showOrgSlug
+              ? `
+          <div class="form-group" id="login-org-group">
+            <label class="form-label" for="login-tenant-slug">Organization Slug</label>
+            <div class="input-wrapper">
+              <input 
+                id="login-tenant-slug" 
+                type="text" 
+                name="tenant_slug" 
+                required 
+                autocomplete="organization" 
+                placeholder="e.g. acme-corp" 
+                value="${escapeHtml(opts.tenantSlug || "")}" 
+                class="form-input"
+              />
+            </div>
+          </div>
+          `
+              : ""
+          }
 
           <div class="form-group">
             <label class="form-label" for="login-password">Password</label>
