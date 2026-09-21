@@ -47,6 +47,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     }
 
+    if (
+      envelope.statusCode === 401 &&
+      request.url?.startsWith("/oidc/account") &&
+      request.headers?.accept?.includes("text/html")
+    ) {
+      response.redirect(
+        302,
+        `/oidc/login?return_to=${encodeURIComponent(request.originalUrl || request.url)}`,
+      );
+      return;
+    }
+
     response.status(envelope.statusCode).json(envelope);
   }
 
